@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import indexRouter from './routes/index.js';
 import dataRouter from './routes/data.js';
 import userRouter from './routes/users.js';
+import messagesRouter from './routes/messages.js';
 
 
 
@@ -29,6 +30,7 @@ mongoose
 app.use('/', indexRouter);
 app.use('/api/data', dataRouter);
 app.use('/users', userRouter);
+app.use('/messages', messagesRouter);
 // pets routes removed — implement later if needed
 
 // Start server
