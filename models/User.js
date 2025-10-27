@@ -2,12 +2,16 @@ import mongoose from 'mongoose';
 
 const PreferencesSchema = new mongoose.Schema(
   {
+    preferredSpecies: [{ type: String }],
     ageRange: {
       min: { type: Number },
       max: { type: Number },
     },
     animalType: { type: String },
     characteristics: [{ type: String }],
+    traits: [{ type: String }],
+    regions: [{ type: String }],
+    notes: { type: String },
   },
   { _id: false }
 );

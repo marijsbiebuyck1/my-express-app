@@ -5,7 +5,6 @@ import express from 'express';
 import mongoose from 'mongoose';
 import indexRouter from './routes/index.js';
 import dataRouter from './routes/data.js';
-import messagesRouter from './routes/messages.js';
 import userRouter from './routes/users.js';
 
 
@@ -29,8 +28,8 @@ mongoose
 // Routes
 app.use('/', indexRouter);
 app.use('/api/data', dataRouter);
-app.use('/messages', messagesRouter);
 app.use('/users', userRouter);
+// pets routes removed — implement later if needed
 
 // Start server
 app.listen(PORT, () => {

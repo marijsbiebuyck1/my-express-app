@@ -93,6 +93,42 @@ router.post('/', async (req, res) => {
 	}
 });
 
+// GET /users/:id/preferences - get user's preferences
+router.get('/:id/preferences', async (req, res) => {
+	const { id } = req.params;
+	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+	try {
+		const user = await User.findById(id).select('preferences');
+		if (!user) return res.status(404).json({ message: 'User not found' });
+		res.json(user.preferences || {});
+	} catch (error) {
+		console.error('GET /users/:id/preferences error:', error);
+		res.status(500).json({ message: 'Error retrieving preferences', error: error.message || error });
+	}
+});
+
+// PATCH /users/:id/preferences - update user's preferences
+router.patch('/:id/preferences', async (req, res) => {
+	const { id } = req.params;
+	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+	try {
+		// Replace or set preferences object
+		const updated = await User.findByIdAndUpdate(
+			id,
+			{ preferences: req.body },
+			{ new: true, runValidators: true }
+		).select('-passwordHash');
+
+		if (!updated) return res.status(404).json({ message: 'User not found' });
+		res.json(updated);
+	} catch (error) {
+		console.error('PATCH /users/:id/preferences error:', error);
+		res.status(400).json({ message: 'Error updating preferences', error: error.message || error });
+	}
+});
+
 	// POST /users/:id/avatar — upload profile image (multipart/form-data 'avatar' field)
 	router.post('/:id/avatar', (req, res) => {
 		// Use multer manually here so we can handle Multer errors and return clean JSON
