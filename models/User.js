@@ -29,6 +29,7 @@ const userSchema = new mongoose.Schema(
     passwordHash: { type: String, required: true },
     birthdate: { type: Date, required: true },
     region: { type: String },
+  profileImage: { type: String },
     preferences: { type: PreferencesSchema, default: {} },
     lifestyle: { type: LifestyleSchema, default: {} },
     role: { type: String, enum: ['adopter', 'shelter', 'admin'], default: 'adopter' },
