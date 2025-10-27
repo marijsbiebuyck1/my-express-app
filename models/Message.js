@@ -1,3 +1,7 @@
+// Backwards-compat re-export to handle case-insensitive import references
+// Some deployments (or older commits) may import './models/message.js' (lowercase).
+// Re-export the canonical `Message.js` model so both paths work.
+export { default } from './Message.js';
 import mongoose from 'mongoose';
 
 // Message schema for chat functionality
