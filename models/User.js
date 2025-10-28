@@ -19,9 +19,31 @@ const PreferencesSchema = new mongoose.Schema(
 const LifestyleSchema = new mongoose.Schema(
   {
     garden: { type: Boolean },
-    children: { type: Boolean },
-    otherPets: { type: Boolean },
+    // children can be detailed (none | under6 | 6to14 | 14plus)
+    children: { type: String, enum: ['none', 'under6', '6to14', '14plus'] },
+    // otherPets lists types present at home (e.g. ['cat','dog','rodent'])
+    otherPets: [{ type: String }],
     notes: { type: String },
+  },
+  { _id: false }
+);
+
+const InterestsSchema = new mongoose.Schema(
+  {
+    employmentStatus: { type: String, enum: ['working', 'student', 'retired', 'other'] },
+    employmentLabels: [{ type: String }], // e.g. telewerk, vaak reizen, 9-to-5
+    freeTime: [{ type: String }], // e.g. wandelen, vakantie, series, drinken, sporten
+    experience: { type: String, enum: ['yes', 'no', 'some'] },
+    householdCompanions: [{ type: String }], // gezin, alleen, partner, roomies
+  },
+  { _id: false }
+);
+
+const HomeSchema = new mongoose.Schema(
+  {
+    garden: { type: Boolean },
+    otherPets: [{ type: String }],
+    children: { type: String, enum: ['none', 'under6', '6to14', '14plus'] },
   },
   { _id: false }
 );
@@ -36,6 +58,8 @@ const userSchema = new mongoose.Schema(
   profileImage: { type: String },
     preferences: { type: PreferencesSchema, default: {} },
     lifestyle: { type: LifestyleSchema, default: {} },
+    interests: { type: InterestsSchema, default: {} },
+    home: { type: HomeSchema, default: {} },
     role: { type: String, enum: ['adopter', 'shelter', 'admin'], default: 'adopter' },
   },
   { timestamps: true }

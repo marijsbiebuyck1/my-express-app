@@ -108,6 +108,91 @@ router.get('/:id/preferences', async (req, res) => {
 	}
 });
 
+// GET /users/:id/interests - get user's interests/profile selections
+router.get('/:id/interests', async (req, res) => {
+	const { id } = req.params;
+	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+	try {
+		const user = await User.findById(id).select('interests');
+		if (!user) return res.status(404).json({ message: 'User not found' });
+		res.json(user.interests || {});
+	} catch (error) {
+		console.error('GET /users/:id/interests error:', error);
+		res.status(500).json({ message: 'Error retrieving interests', error: error.message || error });
+	}
+});
+
+// PATCH /users/:id/interests - update user's interests
+router.patch('/:id/interests', async (req, res) => {
+	const { id } = req.params;
+	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+	try {
+		const updated = await User.findByIdAndUpdate(id, { interests: req.body }, { new: true, runValidators: true }).select('-passwordHash');
+		if (!updated) return res.status(404).json({ message: 'User not found' });
+		res.json(updated);
+	} catch (error) {
+		console.error('PATCH /users/:id/interests error:', error);
+		res.status(400).json({ message: 'Error updating interests', error: error.message || error });
+	}
+});
+
+// GET /users/:id/home - get user's home situation
+router.get('/:id/home', async (req, res) => {
+	const { id } = req.params;
+	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+	try {
+		const user = await User.findById(id).select('home');
+		if (!user) return res.status(404).json({ message: 'User not found' });
+		res.json(user.home || {});
+	} catch (error) {
+		console.error('GET /users/:id/home error:', error);
+		res.status(500).json({ message: 'Error retrieving home info', error: error.message || error });
+	}
+});
+
+// PATCH /users/:id/home - update user's home situation
+router.patch('/:id/home', async (req, res) => {
+	const { id } = req.params;
+	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+	try {
+		const updated = await User.findByIdAndUpdate(id, { home: req.body }, { new: true, runValidators: true }).select('-passwordHash');
+		if (!updated) return res.status(404).json({ message: 'User not found' });
+		res.json(updated);
+	} catch (error) {
+		console.error('PATCH /users/:id/home error:', error);
+		res.status(400).json({ message: 'Error updating home info', error: error.message || error });
+	}
+});
+
+// PATCH /users/:id/profile - update multiple profile sections at once
+// Accepts any of { preferences, interests, home } in the body and updates only provided sections
+router.patch('/:id/profile', async (req, res) => {
+	const { id } = req.params;
+	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+		const { preferences, interests, home } = req.body || {};
+		const update = {};
+
+	if (preferences !== undefined) update.preferences = preferences;
+	if (interests !== undefined) update.interests = interests;
+	if (home !== undefined) update.home = home;
+
+	if (Object.keys(update).length === 0) return res.status(400).json({ message: 'No profile fields provided to update' });
+
+	try {
+		const updated = await User.findByIdAndUpdate(id, { $set: update }, { new: true, runValidators: true }).select('-passwordHash');
+		if (!updated) return res.status(404).json({ message: 'User not found' });
+		res.json(updated);
+	} catch (error) {
+		console.error('PATCH /users/:id/profile error:', error);
+		res.status(400).json({ message: 'Error updating profile', error: error.message || error });
+	}
+});
+
 // PATCH /users/:id/preferences - update user's preferences
 router.patch('/:id/preferences', async (req, res) => {
 	const { id } = req.params;
