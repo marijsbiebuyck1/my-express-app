@@ -8,6 +8,7 @@ import dataRouter from './routes/data.js';
 import userRouter from './routes/users.js';
 import messagesRouter from './routes/messages.js';
 import postsRouter from './routes/posts.js';
+import asielenRouter from './routes/asielen.js';
 
 
 
@@ -33,6 +34,8 @@ app.use('/api/data', dataRouter);
 app.use('/users', userRouter);
 app.use('/messages', messagesRouter);
 app.use('/posts', postsRouter);
+// Mount admin/shelter routes so POST /asielen works on the main server
+app.use('/asielen', asielenRouter);
 // pets routes removed — implement later if needed
 
 // Start server
