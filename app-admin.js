@@ -7,7 +7,8 @@ import indexRouter from "./routes/index.js";
 import asielenRouter from "./routes/asielen.js";
 
 const app = express();
-const PORT = process.env.ADMIN_PORT || 3002;
+// Prefer the platform-provided PORT, fall back to ADMIN_PORT then 3002
+const PORT = process.env.PORT || process.env.ADMIN_PORT || 3002;
 
 app.use(express.json());
 app.use(express.static("public"));
