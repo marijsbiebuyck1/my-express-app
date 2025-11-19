@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Upload post</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; display:flex; align-items:center; justify-content:center; min-height:100vh; background:#f6f6f8; }
+      .card { background:white; padding:24px; border-radius:12px; width:360px; box-shadow:0 10px 30px rgba(0,0,0,0.08); }
+      .preview { width:120px; height:120px; border-radius:10px; background:#e9f0fb; display:flex; align-items:center; justify-content:center; margin-bottom:12px; overflow:hidden }
+      .preview img { width:100%; height:100%; object-fit:cover }
+      .muted { color:#9aa; font-size:14px }
+      .caption { width:100%; padding:10px; border-radius:8px; border:1px solid #eee; margin:10px 0 }
+      .btn { background:#e36a32; color:white; padding:10px 18px; border-radius:20px; border:0; cursor:pointer }
+      .btn[disabled]{ opacity:0.6; cursor:not-allowed }
+      .row { display:flex; gap:12px; align-items:center }
+      .status { margin-top:10px; font-size:14px }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h3>Plaats een foto met jouw nieuwste huisgenoot</h3>
+
+      <div class="row">
+        <label class="preview" id="preview">
+          <span class="muted">upload foto</span>
+        </label>
+
+        <div style="flex:1">
+          <input id="fileInput" type="file" accept="image/*" style="display:block; margin-bottom:8px" />
+          <div class="muted">Onderschrift toevoegen…</div>
+        </div>
+      </div>
+
+      <textarea id="caption" class="caption" rows="3" placeholder="Onderschrift toevoegen..."></textarea>
+
+      <div style="display:flex; justify-content:center; margin-top:8px">
+        <button id="shareBtn" class="btn">Delen</button>
+      </div>
+
+      <div class="status" id="status"></div>
+    </main>
+
+    <script>
+      const fileInput = document.getElementById('fileInput');
+      const preview = document.getElementById('preview');
+      const captionEl = document.getElementById('caption');
+      const shareBtn = document.getElementById('shareBtn');
+      const statusEl = document.getElementById('status');
+
+      let selectedFile = null;
+
+      fileInput.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        selectedFile = file || null;
+        renderPreview(file);
+      });
+
+      function renderPreview(file) {
+        preview.innerHTML = '';
+        if (!file) {
+          const span = document.createElement('span');
+          span.className = 'muted';
+          span.textContent = 'upload foto';
+          preview.appendChild(span);
+          return;
+        }
+
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        img.onload = () => URL.revokeObjectURL(img.src);
+        preview.appendChild(img);
+      }
+
+      async function uploadPost() {
+        if (!selectedFile) {
+          statusEl.textContent = 'Kies eerst een afbeelding.';
+          return;
+        }
+
+        shareBtn.disabled = true;
+        statusEl.textContent = 'Bezig met uploaden...';
+
+        try {
+          const fd = new FormData();
+          fd.append('image', selectedFile);
+          fd.append('caption', captionEl.value || '');
+
+          const res = await fetch('/posts', {
+            method: 'POST',
+            body: fd
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(()=>({ error: res.statusText }));
+            statusEl.textContent = 'Fout: ' + (err.error || res.statusText || res.status);
+            shareBtn.disabled = false;
+            return;
+          }
+
+          const data = await res.json();
+          statusEl.textContent = 'Geüpload! Je post id: ' + (data.id || data._id || '—');
+          // Clear form
+          fileInput.value = '';
+          captionEl.value = '';
+          selectedFile = null;
+          renderPreview(null);
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent = 'Serverfout tijdens upload.';
+        } finally {
+          shareBtn.disabled = false;
+        }
+      }
+
+      shareBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        uploadPost();
+      });
+    </script>
+  </body>
+</html>

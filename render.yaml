@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: my-express-app
+    env: node
+    branch: main
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "npm start"
+    autoDeploy: true
+    healthCheckPath: "/"
