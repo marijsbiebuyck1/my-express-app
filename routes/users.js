@@ -93,6 +93,35 @@ router.post('/', async (req, res) => {
 	}
 });
 
+// POST /users/login — authenticate user with email + password
+router.post('/login', async (req, res) => {
+	const { email, password } = req.body || {};
+
+	if (!email || !password) {
+		return res.status(400).json({ message: 'Email and password are required' });
+	}
+
+	try {
+		const normalizedEmail = String(email).toLowerCase().trim();
+		const user = await User.findOne({ email: normalizedEmail });
+
+		if (!user) {
+			// don't reveal whether email or password was wrong
+			return res.status(401).json({ message: 'Invalid email or password' });
+		}
+
+		const ok = await bcrypt.compare(password, user.passwordHash);
+		if (!ok) return res.status(401).json({ message: 'Invalid email or password' });
+
+		// user.toJSON will remove passwordHash per schema transform
+		const safeUser = user.toJSON ? user.toJSON() : user;
+		res.json({ message: 'Login successful', user: safeUser });
+	} catch (error) {
+		console.error('POST /users/login error:', error);
+		res.status(500).json({ message: 'Error during login', error: error.message || error });
+	}
+});
+
 // GET /users/:id/preferences - get user's preferences
 router.get('/:id/preferences', async (req, res) => {
 	const { id } = req.params;
