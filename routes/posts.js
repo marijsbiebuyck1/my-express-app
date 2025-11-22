@@ -1,8 +1,10 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import Post from '../models/Post.js';
 import User from '../models/User.js';
+import auth from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -28,26 +30,20 @@ const makeAbsoluteUrl = (req, p) => {
 };
 
 // Create a post (multipart/form-data: file + caption)
-router.post('/', upload.single('image'), async (req, res) => {
+// Require authentication: author will be taken from the token (req.user.id)
+router.post('/', auth, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Image is required' });
 
   const imagePath = `/uploads/${req.file.filename}`; // served from /public
   const { caption } = req.body;
 
-  // Resolve author: prefer explicit authorId, then authorEmail, then authorName
-  let authorIdToUse = undefined;
-  if (req.body.authorId) authorIdToUse = req.body.authorId;
-  else if (req.body.authorEmail) {
-    const u = await User.findOne({ email: req.body.authorEmail.toLowerCase().trim() }).select('_id');
-    if (u) authorIdToUse = u._id;
-  } else if (req.body.authorName) {
-    // try to find a single matching user by name
-    const candidates = await User.find({ name: req.body.authorName }).select('_id').limit(2).lean();
-    if (candidates.length === 1) authorIdToUse = candidates[0]._id;
+  // Use authenticated user as author
+  if (!req.user || !req.user.id) {
+    try { if (req.file && req.file.path) await fs.promises.unlink(req.file.path); } catch (e) {}
+    return res.status(401).json({ error: 'Authentication required' });
   }
-
-  const post = await Post.create({ image: imagePath, caption, author: authorIdToUse || undefined });
+  const post = await Post.create({ image: imagePath, caption, author: req.user.id });
 
   // populate author (name + profileImage) for the response
   const populated = await Post.findById(post._id).populate('author', 'name profileImage').lean();

@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
@@ -235,11 +236,16 @@ router.post('/login', async (req, res) => {
 						const filePath = `/uploads/${file.filename}`;
 						const updated = await User.findByIdAndUpdate(user._id, { profileImage: filePath }, { new: true }).select('-passwordHash');
 						const safeUser = updated ? updated.toJSON() : user.toJSON();
-						return res.json({ message: 'Login successful', user: formatUserResponse(req, safeUser) });
+						// issue token
+						const SECRET = process.env.JWT_SECRET || 'dev-secret-change-this';
+						const token = jwt.sign({ id: user._id.toString(), name: user.name }, SECRET, { expiresIn: '7d' });
+						return res.json({ message: 'Login successful', token, user: formatUserResponse(req, safeUser) });
 					}
 
 					const safeUser = user.toJSON ? user.toJSON() : user;
-					return res.json({ message: 'Login successful', user: formatUserResponse(req, safeUser) });
+					const SECRET = process.env.JWT_SECRET || 'dev-secret-change-this';
+					const token = jwt.sign({ id: user._id.toString(), name: user.name }, SECRET, { expiresIn: '7d' });
+					return res.json({ message: 'Login successful', token, user: formatUserResponse(req, safeUser) });
 				} catch (error) {
 					console.error('POST /users/login (multipart) error:', error);
 					if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
@@ -269,7 +275,9 @@ router.post('/login', async (req, res) => {
 		if (!ok) return res.status(401).json({ message: 'Invalid email or password' });
 
 		const safeUser = user.toJSON ? user.toJSON() : user;
-		res.json({ message: 'Login successful', user: formatUserResponse(req, safeUser) });
+		const SECRET = process.env.JWT_SECRET || 'dev-secret-change-this';
+		const token = jwt.sign({ id: user._id.toString(), name: user.name }, SECRET, { expiresIn: '7d' });
+		res.json({ message: 'Login successful', token, user: formatUserResponse(req, safeUser) });
 	} catch (error) {
 		console.error('POST /users/login error:', error);
 		res.status(500).json({ message: 'Error during login', error: error.message || error });
