@@ -25,6 +25,14 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({ storage, fileFilter, limits: { fileSize: 2 * 1024 * 1024 } });
 
+const makeAbsoluteUrl = (req, p) => {
+	if (!p) return p;
+	if (typeof p !== 'string') return p;
+	if (p.startsWith('http://') || p.startsWith('https://')) return p;
+	const pathPart = p.startsWith('/') ? p : `/${p}`;
+	return `${req.protocol}://${req.get('host')}${pathPart}`;
+};
+
 // POST /animals — create animal (multipart/form-data)
 // Accept multiple file field names client-side may use (photo, image, avatar, file)
 // Also accept shelterId aliases (shelterId, shelterID, shelterid)
@@ -89,7 +97,9 @@ router.post('/', (req, res) => {
 				attributes: parsedAttributes,
 			});
 
-			return res.status(201).json(animal);
+			const obj = animal.toJSON ? animal.toJSON() : animal;
+			obj.photo = makeAbsoluteUrl(req, obj.photo);
+			return res.status(201).json(obj);
 		} catch (e) {
 			console.error('POST /animals error:', e);
 			return res.status(500).json({ message: 'Server error', error: e.message || e });
@@ -113,8 +123,12 @@ router.get('/', async (req, res) => {
 			.limit(l)
 			.populate('shelter', 'name profileImage')
 			.lean();
-
-		return res.json(animals);
+		const out = animals.map((a) => {
+			if (a.photo) a.photo = makeAbsoluteUrl(req, a.photo);
+			if (a.shelter && a.shelter.profileImage) a.shelter.profileImage = makeAbsoluteUrl(req, a.shelter.profileImage);
+			return a;
+		});
+		return res.json(out);
 	} catch (e) {
 		console.error('GET /animals error:', e);
 		return res.status(500).json({ message: 'Server error' });
@@ -126,9 +140,12 @@ router.get('/:id', async (req, res) => {
 	try {
 		const { id } = req.params;
 		if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid id' });
-		const animal = await Animal.findById(id).populate('shelter', 'name profileImage');
-		if (!animal) return res.status(404).json({ message: 'Not found' });
-		return res.json(animal);
+	const animal = await Animal.findById(id).populate('shelter', 'name profileImage');
+	if (!animal) return res.status(404).json({ message: 'Not found' });
+	const obj = animal.toJSON ? animal.toJSON() : animal;
+	if (obj.photo) obj.photo = makeAbsoluteUrl(req, obj.photo);
+	if (obj.shelter && obj.shelter.profileImage) obj.shelter.profileImage = makeAbsoluteUrl(req, obj.shelter.profileImage);
+	return res.json(obj);
 	} catch (e) {
 		console.error('GET /animals/:id error:', e);
 		return res.status(500).json({ message: 'Server error' });
