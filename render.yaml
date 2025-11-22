@@ -2,9 +2,15 @@ services:
   - type: web
     name: my-express-app
     env: node
-    branch: main
+    region: oregon
     plan: free
-    buildCommand: "npm install"
-    startCommand: "npm start"
+    repo: https://github.com/<your-github-username>/my-express-app
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
     autoDeploy: true
     healthCheckPath: "/"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # WARNING: don't store secrets here in plaintext. Use the Render dashboard to add MONGO_URI and JWT_SECRET as protected environment variables.
