@@ -1,16 +1,19 @@
 services:
   - type: web
     name: my-express-app
-    env: node
+    runtime: node
     region: oregon
     plan: free
-    repo: https://github.com/<your-github-username>/my-express-app
+    # Set your GitHub repo URL here (optional). Leave empty to connect from the Render UI.
+    repo: ""
     branch: main
-    buildCommand: npm install
-    startCommand: npm start
+    buildCommand: "npm install"
+    startCommand: "npm start"
     autoDeploy: true
     healthCheckPath: "/"
-    envVars:
-      - key: NODE_ENV
-        value: production
-      # WARNING: don't store secrets here in plaintext. Use the Render dashboard to add MONGO_URI and JWT_SECRET as protected environment variables.
+    envVars: []
+    # NOTE: Do NOT put secrets in this file. Add the following environment variables in the Render dashboard
+    # after creating the service:
+    # - MONGO_URI  (your MongoDB connection string)
+    # - JWT_SECRET (a strong random secret)
+    # The dashboard allows you to mark them as "Secret" so they are not displayed in plaintext.
