@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import path from "path";
+import fs from 'fs';
 import multer from "multer";
 import Shelter from "../models/Shelter.js";
 
@@ -30,11 +31,39 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 },
 });
 
+// Accept multiple possible file field names used by different frontends
+const uploadFieldNames = ['avatar', 'photo', 'image', 'file'];
+const uploadFields = upload.fields(uploadFieldNames.map((n) => ({ name: n, maxCount: 1 })));
+
+const getUploadedFileFromReq = (req) => {
+  if (req.file) return req.file;
+  if (req.files && typeof req.files === 'object') {
+    for (const name of uploadFieldNames) {
+      if (Array.isArray(req.files[name]) && req.files[name].length > 0) return req.files[name][0];
+    }
+    if (Array.isArray(req.files) && req.files.length > 0) return req.files[0];
+  }
+  return null;
+};
+
+// Helper to convert stored relative paths into absolute URLs
+const makeAbsoluteUrl = (req, p) => {
+  if (!p) return p;
+  if (typeof p !== 'string') return p;
+  if (p.startsWith('http://') || p.startsWith('https://')) return p;
+  const pathPart = p.startsWith('/') ? p : `/${p}`;
+  return `${req.protocol}://${req.get('host')}${pathPart}`;
+};
+
 // GET /asielen - list shelters
 router.get("/", async (req, res) => {
   try {
-    const shelters = await Shelter.find().select("-passwordHash");
-    res.json(shelters);
+    const shelters = await Shelter.find().select("-passwordHash").lean();
+    const out = shelters.map((s) => {
+      if (s.profileImage) s.profileImage = makeAbsoluteUrl(req, s.profileImage);
+      return s;
+    });
+    res.json(out);
   } catch (error) {
     console.error("GET /asielen error:", error);
     res
@@ -52,8 +81,9 @@ router.get("/:id", async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(id))
     return res.status(400).json({ message: "Invalid shelter ID" });
   try {
-    const shelter = await Shelter.findById(id).select("-passwordHash");
+    const shelter = await Shelter.findById(id).select("-passwordHash").lean();
     if (!shelter) return res.status(404).json({ message: "Shelter not found" });
+    if (shelter.profileImage) shelter.profileImage = makeAbsoluteUrl(req, shelter.profileImage);
     res.json(shelter);
   } catch (error) {
     console.error("GET /asielen/:id error:", error);
@@ -65,9 +95,77 @@ router.get("/:id", async (req, res) => {
       });
   }
 });
-
 // POST /asielen - create shelter
 router.post("/", async (req, res) => {
+  // Accept JSON and multipart/form-data (to allow uploading a profile image on create)
+  const ct = req.headers && req.headers['content-type'];
+  const isMultipart = typeof ct === 'string' && ct.includes('multipart/');
+
+  if (isMultipart) {
+    uploadFields(req, res, async (err) => {
+      const file = getUploadedFileFromReq(req);
+      if (err) {
+        console.error('Multer error on shelter create upload:', err);
+        const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
+        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+        return res.status(400).json({ message });
+      }
+        const { name, email,
+          password,
+        address,
+        phone,
+        region,
+        capacity,
+        openingHours,
+        contactPerson,
+      } = req.body || {};
+
+      if (!name || !email || !password) {
+        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+        return res.status(400).json({ message: 'Missing required fields: name, email, password' });
+      }
+
+      try {
+        const normalizedEmail = String(email).toLowerCase().trim();
+        const existing = await Shelter.findOne({ email: normalizedEmail });
+        if (existing) {
+          if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+          return res.status(409).json({ message: 'Email already in use' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
+
+        const shelterDoc = {
+          name,
+          email: normalizedEmail,
+          passwordHash,
+          address,
+          phone,
+          region,
+          capacity,
+          openingHours,
+          contactPerson,
+        };
+
+        if (file) shelterDoc.profileImage = `/uploads/${file.filename}`;
+
+        const newShelter = new Shelter(shelterDoc);
+        const saved = await newShelter.save();
+        const out = saved.toJSON ? saved.toJSON() : saved;
+        if (out.profileImage) out.profileImage = makeAbsoluteUrl(req, out.profileImage);
+        return res.status(201).json(out);
+      } catch (error) {
+        console.error('POST /asielen (multipart) error:', error);
+        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+        if (error?.code === 11000) return res.status(409).json({ message: 'Duplicate key', error: error.message });
+        return res.status(500).json({ message: 'Error adding shelter', error: error.message || error });
+      }
+    });
+    return;
+  }
+
+  // JSON-based create
   const {
     name,
     email,
@@ -81,15 +179,12 @@ router.post("/", async (req, res) => {
   } = req.body || {};
 
   if (!name || !email || !password)
-    return res
-      .status(400)
-      .json({ message: "Missing required fields: name, email, password" });
+    return res.status(400).json({ message: 'Missing required fields: name, email, password' });
 
   try {
     const normalizedEmail = String(email).toLowerCase().trim();
     const existing = await Shelter.findOne({ email: normalizedEmail });
-    if (existing)
-      return res.status(409).json({ message: "Email already in use" });
+    if (existing) return res.status(409).json({ message: 'Email already in use' });
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
@@ -107,16 +202,13 @@ router.post("/", async (req, res) => {
     });
 
     const saved = await newShelter.save();
-    res.status(201).json(saved);
+    const out = saved.toJSON ? saved.toJSON() : saved;
+    if (out.profileImage) out.profileImage = makeAbsoluteUrl(req, out.profileImage);
+    res.status(201).json(out);
   } catch (error) {
-    console.error("POST /asielen error:", error);
-    if (error?.code === 11000)
-      return res
-        .status(409)
-        .json({ message: "Duplicate key", error: error.message });
-    res
-      .status(500)
-      .json({ message: "Error adding shelter", error: error.message || error });
+    console.error('POST /asielen error:', error);
+    if (error?.code === 11000) return res.status(409).json({ message: 'Duplicate key', error: error.message });
+    res.status(500).json({ message: 'Error adding shelter', error: error.message || error });
   }
 });
 
@@ -146,40 +238,37 @@ router.patch("/:id", async (req, res) => {
 
 // POST /asielen/:id/avatar - upload profile image
 router.post("/:id/avatar", (req, res) => {
-  const singleUpload = upload.single("avatar");
-  singleUpload(req, res, async (err) => {
+  // accept multiple field names and reuse handler
+  uploadFields(req, res, async (err) => {
+    const file = getUploadedFileFromReq(req);
     if (err) {
-      console.error("Multer error on shelter avatar upload:", err);
-      const message =
-        err instanceof multer.MulterError
-          ? err.message
-          : err.message || "Upload error";
+      console.error('Multer error on shelter avatar upload:', err);
+      const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
+      if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
       return res.status(400).json({ message });
     }
 
     const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id))
-      return res.status(400).json({ message: "Invalid shelter ID" });
-    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+      return res.status(400).json({ message: 'Invalid shelter ID' });
+    }
+    if (!file) return res.status(400).json({ message: 'No file uploaded' });
 
     try {
-      const filePath = `/uploads/${req.file.filename}`;
-      const updated = await Shelter.findByIdAndUpdate(
-        id,
-        { profileImage: filePath },
-        { new: true }
-      ).select("-passwordHash");
-      if (!updated)
-        return res.status(404).json({ message: "Shelter not found" });
-      res.json(updated);
+      const filePath = `/uploads/${file.filename}`;
+      const updated = await Shelter.findByIdAndUpdate(id, { profileImage: filePath }, { new: true }).select('-passwordHash');
+      if (!updated) {
+        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+        return res.status(404).json({ message: 'Shelter not found' });
+      }
+      const out = updated.toJSON ? updated.toJSON() : updated;
+      if (out.profileImage) out.profileImage = makeAbsoluteUrl(req, out.profileImage);
+      return res.json(out);
     } catch (error) {
-      console.error("POST /asielen/:id/avatar error:", error);
-      res
-        .status(500)
-        .json({
-          message: "Error uploading avatar",
-          error: error.message || error,
-        });
+      console.error('POST /asielen/:id/avatar error:', error);
+      if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+      return res.status(500).json({ message: 'Error uploading avatar', error: error.message || error });
     }
   });
 });
