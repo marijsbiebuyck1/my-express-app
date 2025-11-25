@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import path from 'path';
+import fs from 'fs';
 import multer from 'multer';
 import Animal from '../models/Animal.js';
 import Shelter from '../models/Shelter.js';
@@ -185,6 +186,51 @@ router.delete('/:id', async (req, res) => {
 	} catch (e) {
 		console.error('DELETE /animals/:id error:', e);
 		return res.status(500).json({ message: 'Server error' });
+	}
+});
+
+// DELETE /animals - destructive: delete ALL animals
+// Protection: requires header `x-delete-confirm: DELETE_ALL_ANIMALS_NOW`.
+// In production an admin token must also be provided via `x-admin-delete-token` matching
+// the env var ADMIN_DELETE_TOKEN. In non-production the confirmation header alone is allowed.
+router.delete('/', async (req, res) => {
+	try {
+		const confirm = req.get('x-delete-confirm') || req.query.confirm;
+		if (confirm !== 'DELETE_ALL_ANIMALS_NOW') {
+			return res.status(400).json({ message: 'Missing or invalid delete confirmation header/query' });
+		}
+
+		const adminTokenEnv = process.env.ADMIN_DELETE_TOKEN;
+		const providedAdmin = req.get('x-admin-delete-token');
+		if (process.env.NODE_ENV === 'production') {
+			if (!adminTokenEnv || adminTokenEnv !== providedAdmin) {
+				return res.status(403).json({ message: 'Forbidden: admin token required in production' });
+			}
+		}
+
+		// list animals, remove local photo files if present, then delete documents
+		const animals = await Animal.find().lean();
+		const count = animals.length;
+
+		for (const a of animals) {
+			try {
+				if (a.photo && typeof a.photo === 'string') {
+					const rel = a.photo.startsWith('/') ? a.photo.slice(1) : a.photo;
+					const fp = path.join(process.cwd(), 'public', rel);
+					if (fs.existsSync(fp)) {
+						try { fs.unlinkSync(fp); } catch (e) { /* ignore file delete errors */ }
+					}
+				}
+			} catch (e) {
+				/* ignore per-item errors */
+			}
+		}
+
+		const result = await Animal.deleteMany({});
+		return res.json({ success: true, deleted: result.deletedCount ?? count });
+	} catch (e) {
+		console.error('DELETE /animals (all) error:', e);
+		return res.status(500).json({ message: 'Server error', error: e.message || e });
 	}
 });
 
