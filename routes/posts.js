@@ -43,23 +43,25 @@ router.post('/', auth, upload.single('image'), async (req, res) => {
     try { if (req.file && req.file.path) await fs.promises.unlink(req.file.path); } catch (e) {}
     return res.status(401).json({ error: 'Authentication required' });
   }
-  const post = await Post.create({ image: imagePath, caption, author: req.user.id });
-
-  // populate author (name + profileImage) for the response
-  const populated = await Post.findById(post._id).populate('author', 'name profileImage').lean();
-  if (populated) {
-    populated.image = makeAbsoluteUrl(req, populated.image);
-    if (populated.author) {
-      populated.author.profileImage = makeAbsoluteUrl(req, populated.author.profileImage);
-      // ensure author.id exists and remove internal _id if lean returned it
-      if (populated.author._id) {
-        populated.author.id = populated.author._id.toString();
-        delete populated.author._id;
-      }
-    }
+  // ensure the user exists (fresh read) and use that as the author
+  const uploader = await User.findById(req.user.id).select('name profileImage');
+  if (!uploader) {
+    try { if (req.file && req.file.path) await fs.promises.unlink(req.file.path); } catch (e) {}
+    return res.status(401).json({ error: 'Authenticated user not found' });
   }
 
-  return res.status(201).json(populated || post);
+  const post = await Post.create({ image: imagePath, caption, author: uploader._id });
+
+  // build response using uploader info to avoid cases where populate might return stale/mis-mapped data
+  const out = post.toJSON ? post.toJSON() : post;
+  out.image = makeAbsoluteUrl(req, out.image);
+  out.author = {
+    id: uploader._id.toString(),
+    name: uploader.name,
+    profileImage: makeAbsoluteUrl(req, uploader.profileImage),
+  };
+
+  return res.status(201).json(out);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Server error' });
