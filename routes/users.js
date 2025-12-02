@@ -4,46 +4,13 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs from 'fs';
-import multer from 'multer';
+// multer removed per request — profile uploads handled via JSON (filename or base64 data URL)
 import User from '../models/User.js';
 
 const router = express.Router();
 
-// Multer setup for local uploads
+// directory for uploads (still used when saving base64 uploads)
 const uploadDir = path.join(process.cwd(), 'public', 'uploads');
-const storage = multer.diskStorage({
-	destination: (req, file, cb) => cb(null, uploadDir),
-	filename: (req, file, cb) => {
-		const safeName = file.originalname.replace(/[^a-z0-9.\-\_]/gi, '_');
-		const filename = `${Date.now()}-${safeName}`;
-		cb(null, filename);
-	},
-});
-
-const fileFilter = (req, file, cb) => {
-	const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-	if (allowed.includes(file.mimetype)) cb(null, true);
-	else cb(new Error('Only image files (jpeg, png, webp) are allowed'));
-};
-
-const upload = multer({ storage, fileFilter, limits: { fileSize: 2 * 1024 * 1024 } });
-
-// Accept multiple possible file field names used by different frontends
-const uploadFieldNames = ['avatar', 'photo', 'image', 'file'];
-const uploadFields = upload.fields(uploadFieldNames.map((n) => ({ name: n, maxCount: 1 })));
-
-const getUploadedFileFromReq = (req) => {
-	// multer puts single files in req.file (for single) or req.files (object) for fields/any
-	if (req.file) return req.file;
-	if (req.files && typeof req.files === 'object') {
-		for (const name of uploadFieldNames) {
-			if (Array.isArray(req.files[name]) && req.files[name].length > 0) return req.files[name][0];
-		}
-		// if req.files is an array (upload.any), pick first
-		if (Array.isArray(req.files) && req.files.length > 0) return req.files[0];
-	}
-	return null;
-};
 
 // Helper to make stored relative paths (e.g. /uploads/xxx.jpg) into absolute URLs
 const makeAbsoluteUrl = (req, p) => {
@@ -98,66 +65,8 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /users — create user (expects password, will be hashed)
+// Note: multer/multipart removed — registration accepts JSON only
 router.post('/', async (req, res) => {
-	// Accept both JSON and multipart/form-data (so a photo can be uploaded at registration)
-	const ct = req.headers && req.headers['content-type'];
-	const isMultipart = typeof ct === 'string' && ct.includes('multipart/');
-
-		if (isMultipart) {
-			uploadFields(req, res, async (err) => {
-				if (err) {
-					console.error('Multer error on register upload:', err);
-					const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
-					return res.status(400).json({ message });
-				}
-
-				const { name, email, password, birthdate, region, preferences, lifestyle, role } = req.body || {};
-				const file = getUploadedFileFromReq(req);
-				if (!name || !email || !password || !birthdate) {
-					if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-					return res.status(400).json({ message: 'Missing required fields: name, email, password, birthdate' });
-				}
-
-				try {
-					const normalizedEmail = String(email).toLowerCase().trim();
-					const existing = await User.findOne({ email: normalizedEmail });
-					if (existing) {
-						if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-						return res.status(409).json({ message: 'Email already in use' });
-					}
-
-					const salt = await bcrypt.genSalt(10);
-					const passwordHash = await bcrypt.hash(password, salt);
-
-					const userDoc = {
-						name,
-						email: normalizedEmail,
-						passwordHash,
-						birthdate: new Date(birthdate),
-						region,
-						preferences,
-						lifestyle,
-						role,
-					};
-
-					if (file) {
-						userDoc.profileImage = `/uploads/${file.filename}`;
-					}
-
-					const newUser = new User(userDoc);
-					const saved = await newUser.save();
-					return res.status(201).json(formatUserResponse(req, saved));
-				} catch (error) {
-					console.error('POST /users (multipart) error:', error);
-					if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-					if (error?.code === 11000) return res.status(409).json({ message: 'Duplicate key', error: error.message });
-					return res.status(500).json({ message: 'Error adding user', error: error.message || error });
-				}
-			});
-			return;
-		}
-
-	// JSON-based registration (default)
 	const { name, email, password, birthdate, region, preferences, lifestyle, role } = req.body || {};
 
 	if (!name || !email || !password || !birthdate) {
@@ -194,67 +103,6 @@ router.post('/', async (req, res) => {
 
 // POST /users/login — authenticate user with email + password
 router.post('/login', async (req, res) => {
-	// Log content-type for debugging
-	const ct = req.headers && req.headers['content-type'];
-	console.log('POST /users/login content-type:', ct);
-
-	const isMultipart = typeof ct === 'string' && ct.includes('multipart/');
-
-		if (isMultipart) {
-			uploadFields(req, res, async (err) => {
-				const file = getUploadedFileFromReq(req);
-				console.log('POST /users/login multipart handler: file=', file, ' body=', req.body);
-				if (err) {
-					console.error('Multer error on login upload:', err);
-					const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
-					return res.status(400).json({ message });
-				}
-
-				const { email, password } = req.body || {};
-				if (!email || !password) {
-					if (file) {
-						try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-					}
-					return res.status(400).json({ message: 'Email and password are required' });
-				}
-
-				try {
-					const normalizedEmail = String(email).toLowerCase().trim();
-					const user = await User.findOne({ email: normalizedEmail });
-					if (!user) {
-						if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-						return res.status(401).json({ message: 'Invalid email or password' });
-					}
-
-					const ok = await bcrypt.compare(password, user.passwordHash);
-					if (!ok) {
-						if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-						return res.status(401).json({ message: 'Invalid email or password' });
-					}
-
-					if (file) {
-						const filePath = `/uploads/${file.filename}`;
-						const updated = await User.findByIdAndUpdate(user._id, { profileImage: filePath }, { new: true }).select('-passwordHash');
-						const safeUser = updated ? updated.toJSON() : user.toJSON();
-						// issue token
-						const SECRET = process.env.JWT_SECRET || 'dev-secret-change-this';
-						const token = jwt.sign({ id: user._id.toString(), name: user.name }, SECRET, { expiresIn: '7d' });
-						return res.json({ message: 'Login successful', token, user: formatUserResponse(req, safeUser) });
-					}
-
-					const safeUser = user.toJSON ? user.toJSON() : user;
-					const SECRET = process.env.JWT_SECRET || 'dev-secret-change-this';
-					const token = jwt.sign({ id: user._id.toString(), name: user.name }, SECRET, { expiresIn: '7d' });
-					return res.json({ message: 'Login successful', token, user: formatUserResponse(req, safeUser) });
-				} catch (error) {
-					console.error('POST /users/login (multipart) error:', error);
-					if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-					return res.status(500).json({ message: 'Error during login', error: error.message || error });
-				}
-			});
-			return;
-		}
-
 	// JSON-based login (default)
 	console.log('POST /users/login json handler: req.body=', req.body);
 	const { email, password } = req.body || {};
@@ -405,26 +253,33 @@ router.patch('/:id/preferences', async (req, res) => {
 	}
 });
 
-	// POST /users/:id/avatar and /users/:id/photo — upload profile image (accepts multiple field names)
-	const profileUploadHandler = (req, res) => {
-		uploadFields(req, res, async (err) => {
-			const file = getUploadedFileFromReq(req);
-			if (err) {
-				console.error('Multer error on profile upload:', err);
-				const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
-				return res.status(400).json({ message });
+	// POST /users/:id/avatar and /users/:id/photo — upload profile image
+	// multer removed: accept JSON with either { filename } (already uploaded to /public/uploads)
+	// or { profileImage: 'data:image/...;base64,...' } (base64 data URL) which will be decoded and saved.
+	const profileUploadHandler = async (req, res) => {
+		const { id } = req.params;
+		if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+
+		let file = null;
+		try {
+			const { profileImage, filename } = req.body || {};
+			if (profileImage && typeof profileImage === 'string' && profileImage.startsWith('data:')) {
+				const matches = profileImage.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+				if (!matches) return res.status(400).json({ message: 'Invalid data URL' });
+				const mime = matches[1];
+				const base64 = matches[2];
+				const ext = mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp' : '.jpg';
+				const genFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+				const absPath = path.join(uploadDir, genFilename);
+				await fs.promises.writeFile(absPath, Buffer.from(base64, 'base64'));
+				file = { filename: genFilename };
+			} else if (filename && typeof filename === 'string') {
+				file = { filename: path.basename(filename) };
+			} else {
+				return res.status(400).json({ message: 'No file provided; send { filename } or { profileImage: dataURL } in JSON body' });
 			}
 
-			const { id } = req.params;
-			if (!mongoose.Types.ObjectId.isValid(id)) {
-				if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-				return res.status(400).json({ message: 'Invalid user ID' });
-			}
-
-			if (!file) {
-				return res.status(400).json({ message: 'No file uploaded' });
-			}
-
+			// ---- preserved update block (user requested to keep this) ----
 			try {
 				const filePath = `/uploads/${file.filename}`;
 				const updated = await User.findByIdAndUpdate(id, { profileImage: filePath }, { new: true }).select('-passwordHash');
@@ -438,7 +293,12 @@ router.patch('/:id/preferences', async (req, res) => {
 				if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
 				return res.status(500).json({ message: 'Error uploading profile image', error: error.message || error });
 			}
-		});
+			// ---- end preserved block ----
+		} catch (err) {
+			console.error('Profile upload handler error:', err);
+			if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+			return res.status(500).json({ message: 'Unexpected error', error: err.message || err });
+		}
 	};
 
 	router.post('/:id/avatar', profileUploadHandler);
