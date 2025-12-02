@@ -1,5 +1,4 @@
 import express from "express";
-import multer from "multer";
 import path from "path";
 import fs from "fs";
 import Post from "../models/Post.js";
@@ -8,17 +7,8 @@ import auth from "../middleware/auth.js";
 
 const router = express.Router();
 
-// Configure multer storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join("public", "uploads")),
-  filename: (req, file, cb) => {
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, `${unique}${ext}`);
-  },
-});
-
-const upload = multer({ storage });
+// uploads directory (used when decoding base64 data-URLs)
+const uploadDir = path.join(process.cwd(), "public", "uploads");
 
 // Helper to convert stored relative paths into absolute URLs
 const makeAbsoluteUrl = (req, p) => {
@@ -29,27 +19,41 @@ const makeAbsoluteUrl = (req, p) => {
   return `${req.protocol}://${req.get("host")}${pathPart}`;
 };
 
-// Create a post (multipart/form-data: file + caption)
+// Create a post (JSON): either provide { filename } referring to /public/uploads
+// or { image: 'data:image/...;base64,...' } which will be decoded and saved.
 // Require authentication: author will be taken from the token (req.user.id)
-router.post("/", auth, upload.single("image"), async (req, res) => {
+router.post("/", auth, async (req, res) => {
+  let file = null;
   try {
-    if (!req.file) return res.status(400).json({ error: "Image is required" });
+    const { image, filename, caption } = req.body || {};
 
-    const imagePath = `/uploads/${req.file.filename}`; // served from /public
-    const { caption } = req.body;
+    if (image && typeof image === "string" && image.startsWith("data:")) {
+      const matches = image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (!matches) return res.status(400).json({ error: "Invalid image data URL" });
+      const mime = matches[1];
+      const base64 = matches[2];
+      const ext = mime.includes("png") ? ".png" : mime.includes("webp") ? ".webp" : ".jpg";
+      const genFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+      const absPath = path.join(uploadDir, genFilename);
+      await fs.promises.writeFile(absPath, Buffer.from(base64, "base64"));
+      file = { filename: genFilename };
+    } else if (filename && typeof filename === "string") {
+      file = { filename: path.basename(filename) };
+    } else {
+      return res.status(400).json({ error: "Image is required (filename or data URL)" });
+    }
+
+    const imagePath = `/uploads/${file.filename}`; // served from /public
 
     // Use authenticated user as author
     if (!req.user || !req.user.id) {
       try {
-        if (req.file && req.file.path) await fs.promises.unlink(req.file.path);
+        if (file) await fs.promises.unlink(path.join(uploadDir, file.filename));
       } catch (e) {}
       return res.status(401).json({ error: "Authentication required" });
     }
-    const post = await Post.create({
-      image: imagePath,
-      caption,
-      author: req.user.id,
-    });
+
+    const post = await Post.create({ image: imagePath, caption, author: req.user.id });
 
     // populate author (name + profileImage) for the response
     const populated = await Post.findById(post._id)
