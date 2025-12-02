@@ -18,7 +18,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(express.json()); // Use JSON as global data format
+// Increase body size limits so frontend can send base64 image data URLs as JSON
+app.use(express.json({ limit: '10mb' })); // Use JSON as global data format
+// Also accept URL-encoded bodies (useful for HTML forms or clients that send profileImage as a text field)
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static("public")); // Make public folder accessible
 
 // Ensure uploads directory exists (useful for deployed environments)
