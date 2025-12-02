@@ -2,29 +2,13 @@ import express from 'express';
 import mongoose from 'mongoose';
 import path from 'path';
 import fs from 'fs';
-import multer from 'multer';
 import Animal from '../models/Animal.js';
 import Shelter from '../models/Shelter.js';
 
 const router = express.Router();
 
-// Multer setup — save to project public/uploads and restrict to images
+// uploads directory (used when decoding base64 data-URLs)
 const uploadDir = path.join(process.cwd(), 'public', 'uploads');
-const storage = multer.diskStorage({
-	destination: (req, file, cb) => cb(null, uploadDir),
-	filename: (req, file, cb) => {
-		const safe = file.originalname.replace(/[^a-z0-9.\-\_\.]/gi, '_');
-		cb(null, `${Date.now()}-${safe}`);
-	},
-});
-
-const fileFilter = (req, file, cb) => {
-	const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-	if (allowed.includes(file.mimetype)) cb(null, true);
-	else cb(new Error('Only image files (jpeg, png, webp) are allowed'));
-};
-
-const upload = multer({ storage, fileFilter, limits: { fileSize: 2 * 1024 * 1024 } });
 
 const makeAbsoluteUrl = (req, p) => {
 	if (!p) return p;
@@ -34,78 +18,67 @@ const makeAbsoluteUrl = (req, p) => {
 	return `${req.protocol}://${req.get('host')}${pathPart}`;
 };
 
-// POST /animals — create animal (multipart/form-data)
-// Accept multiple file field names client-side may use (photo, image, avatar, file)
+// POST /animals — create animal
+// Accept either { filename } referring to /public/uploads or { image: 'data:...;base64,...' }
 // Also accept shelterId aliases (shelterId, shelterID, shelterid)
-router.post('/', (req, res) => {
-	const fields = upload.fields([
-		{ name: 'photo', maxCount: 1 },
-		{ name: 'image', maxCount: 1 },
-		{ name: 'avatar', maxCount: 1 },
-		{ name: 'file', maxCount: 1 },
-	]);
-	fields(req, res, async (err) => {
-		if (err) {
-			console.error('Multer error on animal upload:', err);
-			const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
-			return res.status(400).json({ message });
-		}
+router.post('/', async (req, res) => {
+  let file = null;
+  try {
+    const { image, filename, name, birthdate, attributes } = req.body || {};
+    const shelterId = req.body?.shelterId ?? req.body?.shelterID ?? req.body?.shelterid;
 
-		// DEBUG: log incoming multipart fields and files to help diagnose missing fields
-		console.log('POST /animals received body:', req.body);
-		console.log('POST /animals received files:', req.files);
+    if (!name || !birthdate || !shelterId) return res.status(400).json({ message: 'name, birthdate and shelterId are required' });
+    if (!mongoose.Types.ObjectId.isValid(shelterId)) return res.status(400).json({ message: 'Invalid shelterId' });
 
-		try {
-			// Accept file from multiple possible field names
-			let file = null;
-			if (req.file) file = req.file;
-			if (!file && req.files) {
-				file = (req.files.photo && req.files.photo[0]) ||
-					(req.files.image && req.files.image[0]) ||
-					(req.files.avatar && req.files.avatar[0]) ||
-					(req.files.file && req.files.file[0]) || null;
-			}
-			if (!file) return res.status(400).json({ message: 'Photo is required' });
+    // parse attributes if provided as string
+    let parsedAttributes = {};
+    if (attributes) {
+      try {
+        parsedAttributes = typeof attributes === 'string' ? JSON.parse(attributes) : attributes;
+      } catch (e) {
+        return res.status(400).json({ message: 'attributes must be valid JSON' });
+      }
+    }
 
-			// accept shelterId aliases from different clients
-			const { name, birthdate, attributes } = req.body || {};
-			const shelterId = req.body?.shelterId ?? req.body?.shelterID ?? req.body?.shelterid;
-			if (!name || !birthdate || !shelterId) return res.status(400).json({ message: 'name, birthdate and shelterId are required' });
+    if (image && typeof image === 'string' && image.startsWith('data:')) {
+      const matches = image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+      if (!matches) return res.status(400).json({ message: 'Invalid image data URL' });
+      const mime = matches[1];
+      const base64 = matches[2];
+      const ext = mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp' : '.jpg';
+      const genFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+      const absPath = path.join(uploadDir, genFilename);
+      await fs.promises.writeFile(absPath, Buffer.from(base64, 'base64'));
+      file = { filename: genFilename };
+    } else if (filename && typeof filename === 'string') {
+      file = { filename: path.basename(filename) };
+    } else {
+      return res.status(400).json({ message: 'Photo is required (filename or data URL)' });
+    }
 
-			if (!mongoose.Types.ObjectId.isValid(shelterId)) return res.status(400).json({ message: 'Invalid shelterId' });
+    const shelter = await Shelter.findById(shelterId).select('-passwordHash');
+    if (!shelter) {
+      if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+      return res.status(404).json({ message: 'Shelter not found' });
+    }
 
-			// optional attributes as JSON string
-			let parsedAttributes = {};
-			if (attributes) {
-				try {
-					parsedAttributes = typeof attributes === 'string' ? JSON.parse(attributes) : attributes;
-				} catch (e) {
-					return res.status(400).json({ message: 'attributes must be valid JSON' });
-				}
-			}
+    const filePath = `/uploads/${file.filename}`;
 
-			// verify shelter exists (so uploading from profile makes sense)
-			const shelter = await Shelter.findById(shelterId).select('-passwordHash');
-			if (!shelter) return res.status(404).json({ message: 'Shelter not found' });
+    const animal = await Animal.create({
+      shelter: shelter._id,
+      name,
+      birthdate: new Date(birthdate),
+      photo: filePath,
+      attributes: parsedAttributes,
+    });
 
-			const filePath = `/uploads/${file.filename}`;
-
-			const animal = await Animal.create({
-				shelter: shelter._id,
-				name,
-				birthdate: new Date(birthdate),
-				photo: filePath,
-				attributes: parsedAttributes,
-			});
-
-			const obj = animal.toJSON ? animal.toJSON() : animal;
-			obj.photo = makeAbsoluteUrl(req, obj.photo);
-			return res.status(201).json(obj);
-		} catch (e) {
-			console.error('POST /animals error:', e);
-			return res.status(500).json({ message: 'Server error', error: e.message || e });
-		}
-	});
+    const obj = animal.toJSON ? animal.toJSON() : animal;
+    obj.photo = makeAbsoluteUrl(req, obj.photo);
+    return res.status(201).json(obj);
+  } catch (e) {
+    console.error('POST /animals error:', e);
+    return res.status(500).json({ message: 'Server error', error: e.message || e });
+  }
 });
 
 // GET /animals — list animals (optional ?shelterId=&page=&limit=)

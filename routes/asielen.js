@@ -3,48 +3,12 @@ import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import path from "path";
 import fs from 'fs';
-import multer from "multer";
 import Shelter from "../models/Shelter.js";
 
 const router = express.Router();
 
-// Multer setup for local uploads (reuse same public/uploads)
+// uploads directory (used when decoding base64 data-URLs)
 const uploadDir = path.join(process.cwd(), "public", "uploads");
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const safeName = file.originalname.replace(/[^a-z0-9.\-\_\.]/gi, "_");
-    const filename = `${Date.now()}-${safeName}`;
-    cb(null, filename);
-  },
-});
-
-const fileFilter = (req, file, cb) => {
-  const allowed = ["image/jpeg", "image/png", "image/webp"];
-  if (allowed.includes(file.mimetype)) cb(null, true);
-  else cb(new Error("Only image files (jpeg, png, webp) are allowed"));
-};
-
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: { fileSize: 2 * 1024 * 1024 },
-});
-
-// Accept multiple possible file field names used by different frontends
-const uploadFieldNames = ['avatar', 'photo', 'image', 'file'];
-const uploadFields = upload.fields(uploadFieldNames.map((n) => ({ name: n, maxCount: 1 })));
-
-const getUploadedFileFromReq = (req) => {
-  if (req.file) return req.file;
-  if (req.files && typeof req.files === 'object') {
-    for (const name of uploadFieldNames) {
-      if (Array.isArray(req.files[name]) && req.files[name].length > 0) return req.files[name][0];
-    }
-    if (Array.isArray(req.files) && req.files.length > 0) return req.files[0];
-  }
-  return null;
-};
 
 // Helper to convert stored relative paths into absolute URLs
 const makeAbsoluteUrl = (req, p) => {
@@ -102,67 +66,8 @@ router.post("/", async (req, res) => {
   const isMultipart = typeof ct === 'string' && ct.includes('multipart/');
 
   if (isMultipart) {
-    uploadFields(req, res, async (err) => {
-      const file = getUploadedFileFromReq(req);
-      if (err) {
-        console.error('Multer error on shelter create upload:', err);
-        const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
-        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-        return res.status(400).json({ message });
-      }
-        const { name, email,
-          password,
-        address,
-        phone,
-        region,
-        capacity,
-        openingHours,
-        contactPerson,
-      } = req.body || {};
-
-      if (!name || !email || !password) {
-        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-        return res.status(400).json({ message: 'Missing required fields: name, email, password' });
-      }
-
-      try {
-        const normalizedEmail = String(email).toLowerCase().trim();
-        const existing = await Shelter.findOne({ email: normalizedEmail });
-        if (existing) {
-          if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-          return res.status(409).json({ message: 'Email already in use' });
-        }
-
-        const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash(password, salt);
-
-        const shelterDoc = {
-          name,
-          email: normalizedEmail,
-          passwordHash,
-          address,
-          phone,
-          region,
-          capacity,
-          openingHours,
-          contactPerson,
-        };
-
-        if (file) shelterDoc.profileImage = `/uploads/${file.filename}`;
-
-        const newShelter = new Shelter(shelterDoc);
-        const saved = await newShelter.save();
-        const out = saved.toJSON ? saved.toJSON() : saved;
-        if (out.profileImage) out.profileImage = makeAbsoluteUrl(req, out.profileImage);
-        return res.status(201).json(out);
-      } catch (error) {
-        console.error('POST /asielen (multipart) error:', error);
-        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-        if (error?.code === 11000) return res.status(409).json({ message: 'Duplicate key', error: error.message });
-        return res.status(500).json({ message: 'Error adding shelter', error: error.message || error });
-      }
-    });
-    return;
+    // multer removed — accept JSON only for create
+    return res.status(400).json({ message: 'Multipart/form-data not supported. Send JSON (use profileImage data URL or filename).' });
   }
 
   // JSON-based create
@@ -238,39 +143,51 @@ router.patch("/:id", async (req, res) => {
 
 // POST /asielen/:id/avatar - upload profile image
 router.post("/:id/avatar", (req, res) => {
-  // accept multiple field names and reuse handler
-  uploadFields(req, res, async (err) => {
-    const file = getUploadedFileFromReq(req);
-    if (err) {
-      console.error('Multer error on shelter avatar upload:', err);
-      const message = err instanceof multer.MulterError ? err.message : err.message || 'Upload error';
-      if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-      return res.status(400).json({ message });
-    }
-
+  // accept JSON body with { filename } or { profileImage: dataURL }
+  (async () => {
     const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-      return res.status(400).json({ message: 'Invalid shelter ID' });
-    }
-    if (!file) return res.status(400).json({ message: 'No file uploaded' });
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid shelter ID' });
 
+    let file = null;
     try {
-      const filePath = `/uploads/${file.filename}`;
-      const updated = await Shelter.findByIdAndUpdate(id, { profileImage: filePath }, { new: true }).select('-passwordHash');
-      if (!updated) {
-        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-        return res.status(404).json({ message: 'Shelter not found' });
+      const { profileImage, filename } = req.body || {};
+      if (profileImage && typeof profileImage === 'string' && profileImage.startsWith('data:')) {
+        const matches = profileImage.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+        if (!matches) return res.status(400).json({ message: 'Invalid data URL' });
+        const mime = matches[1];
+        const base64 = matches[2];
+        const ext = mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp' : '.jpg';
+        const genFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+        const absPath = path.join(uploadDir, genFilename);
+        await fs.promises.writeFile(absPath, Buffer.from(base64, 'base64'));
+        file = { filename: genFilename };
+      } else if (filename && typeof filename === 'string') {
+        file = { filename: path.basename(filename) };
+      } else {
+        return res.status(400).json({ message: 'No file provided; send { filename } or { profileImage: dataURL } in JSON body' });
       }
-      const out = updated.toJSON ? updated.toJSON() : updated;
-      if (out.profileImage) out.profileImage = makeAbsoluteUrl(req, out.profileImage);
-      return res.json(out);
-    } catch (error) {
-      console.error('POST /asielen/:id/avatar error:', error);
+
+      try {
+        const filePath = `/uploads/${file.filename}`;
+        const updated = await Shelter.findByIdAndUpdate(id, { profileImage: filePath }, { new: true }).select('-passwordHash');
+        if (!updated) {
+          if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+          return res.status(404).json({ message: 'Shelter not found' });
+        }
+        const out = updated.toJSON ? updated.toJSON() : updated;
+        if (out.profileImage) out.profileImage = makeAbsoluteUrl(req, out.profileImage);
+        return res.json(out);
+      } catch (error) {
+        console.error('POST /asielen/:id/avatar error:', error);
+        if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
+        return res.status(500).json({ message: 'Error uploading avatar', error: error.message || error });
+      }
+    } catch (err) {
+      console.error('Profile upload handler error:', err);
       if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-      return res.status(500).json({ message: 'Error uploading avatar', error: error.message || error });
+      return res.status(500).json({ message: 'Unexpected error', error: err.message || err });
     }
-  });
+  })();
 });
 
 export default router;
