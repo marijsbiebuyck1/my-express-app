@@ -258,11 +258,17 @@ router.patch('/:id/preferences', async (req, res) => {
 	// or { profileImage: 'data:image/...;base64,...' } (base64 data URL) which will be decoded and saved.
 	const profileUploadHandler = async (req, res) => {
 		const { id } = req.params;
+		// Debug: log incoming content-type and body keys to help diagnose missing payloads
+		console.log('profileUploadHandler called. content-type=', req.get('content-type'));
+		try { console.log('profileUploadHandler req.body keys=', Object.keys(req.body || {})); } catch (e) { console.log('profileUploadHandler req.body read error', e.message); }
 		if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
 
 		let file = null;
 		try {
 			const { profileImage, filename } = req.body || {};
+			if (profileImage && typeof profileImage === 'string') {
+				console.log('profileUploadHandler received profileImage length=', profileImage.length);
+			}
 			if (profileImage && typeof profileImage === 'string' && profileImage.startsWith('data:')) {
 				const matches = profileImage.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
 				if (!matches) return res.status(400).json({ message: 'Invalid data URL' });
