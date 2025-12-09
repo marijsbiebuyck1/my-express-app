@@ -13,10 +13,7 @@ const uploadDir = path.join(process.cwd(), "public", "uploads");
 // Helper to convert stored relative paths into absolute URLs
 const makeAbsoluteUrl = (req, p) => {
   if (!p) return p;
-  if (typeof p !== "string") return p;
-  if (p.startsWith("http://") || p.startsWith("https://")) return p;
-  const pathPart = p.startsWith("/") ? p : `/${p}`;
-  return `${req.protocol}://${req.get("host")}${pathPart}`;
+  return p;
 };
 
 // Create a post (JSON): either provide { filename } referring to /public/uploads
@@ -28,19 +25,30 @@ router.post("/", auth, async (req, res) => {
     const { image, filename, caption } = req.body || {};
 
     if (image && typeof image === "string" && image.startsWith("data:")) {
-      const matches = image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-      if (!matches) return res.status(400).json({ error: "Invalid image data URL" });
+      const matches = image.match(
+        /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/
+      );
+      if (!matches)
+        return res.status(400).json({ error: "Invalid image data URL" });
       const mime = matches[1];
       const base64 = matches[2];
-      const ext = mime.includes("png") ? ".png" : mime.includes("webp") ? ".webp" : ".jpg";
-      const genFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+      const ext = mime.includes("png")
+        ? ".png"
+        : mime.includes("webp")
+        ? ".webp"
+        : ".jpg";
+      const genFilename = `${Date.now()}-${Math.round(
+        Math.random() * 1e9
+      )}${ext}`;
       const absPath = path.join(uploadDir, genFilename);
       await fs.promises.writeFile(absPath, Buffer.from(base64, "base64"));
       file = { filename: genFilename };
     } else if (filename && typeof filename === "string") {
       file = { filename: path.basename(filename) };
     } else {
-      return res.status(400).json({ error: "Image is required (filename or data URL)" });
+      return res
+        .status(400)
+        .json({ error: "Image is required (filename or data URL)" });
     }
 
     const imagePath = `/uploads/${file.filename}`; // served from /public
@@ -53,7 +61,11 @@ router.post("/", auth, async (req, res) => {
       return res.status(401).json({ error: "Authentication required" });
     }
 
-    const post = await Post.create({ image: imagePath, caption, author: req.user.id });
+    const post = await Post.create({
+      image: imagePath,
+      caption,
+      author: req.user.id,
+    });
 
     // populate author (name + profileImage) for the response
     const populated = await Post.findById(post._id)
