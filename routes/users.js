@@ -24,15 +24,7 @@ const makeAbsoluteUrl = (req, p) => {
 
 const formatUserResponse = (req, data) => {
   if (!data) return data;
-  const toObj = (u) => {
-    // u may already be a plain object or a mongoose doc
-    const obj = u && typeof u.toJSON === "function" ? u.toJSON() : { ...u };
-    if (obj && obj.profileImage)
-      obj.profileImage = makeAbsoluteUrl(req, obj.profileImage);
-    return obj;
-  };
-  if (Array.isArray(data)) return data.map(toObj);
-  return toObj(data);
+  return data;
 };
 // GET /users — list users (without passwordHash)
 router.get("/", async (req, res) => {
@@ -47,12 +39,10 @@ router.get("/", async (req, res) => {
   } catch (error) {
     console.error("GET /users error:", error);
     if (error && error.stack) console.error(error.stack);
-    res
-      .status(500)
-      .json({
-        message: "Error retrieving users",
-        error: error.message || error,
-      });
+    res.status(500).json({
+      message: "Error retrieving users",
+      error: error.message || error,
+    });
   }
 });
 
@@ -69,12 +59,10 @@ router.get("/:id", async (req, res) => {
     res.json(formatUserResponse(req, user));
   } catch (error) {
     console.error("GET /users/:id error:", error);
-    res
-      .status(500)
-      .json({
-        message: "Error retrieving user",
-        error: error.message || error,
-      });
+    res.status(500).json({
+      message: "Error retrieving user",
+      error: error.message || error,
+    });
   }
 });
 
@@ -93,11 +81,9 @@ router.post("/", async (req, res) => {
   } = req.body || {};
 
   if (!name || !email || !password || !birthdate) {
-    return res
-      .status(400)
-      .json({
-        message: "Missing required fields: name, email, password, birthdate",
-      });
+    return res.status(400).json({
+      message: "Missing required fields: name, email, password, birthdate",
+    });
   }
 
   try {
@@ -188,12 +174,10 @@ router.get("/:id/preferences", async (req, res) => {
     res.json(user.preferences || {});
   } catch (error) {
     console.error("GET /users/:id/preferences error:", error);
-    res
-      .status(500)
-      .json({
-        message: "Error retrieving preferences",
-        error: error.message || error,
-      });
+    res.status(500).json({
+      message: "Error retrieving preferences",
+      error: error.message || error,
+    });
   }
 });
 
@@ -209,12 +193,10 @@ router.get("/:id/interests", async (req, res) => {
     res.json(user.interests || {});
   } catch (error) {
     console.error("GET /users/:id/interests error:", error);
-    res
-      .status(500)
-      .json({
-        message: "Error retrieving interests",
-        error: error.message || error,
-      });
+    res.status(500).json({
+      message: "Error retrieving interests",
+      error: error.message || error,
+    });
   }
 });
 
@@ -234,12 +216,10 @@ router.patch("/:id/interests", async (req, res) => {
     res.json(formatUserResponse(req, updated));
   } catch (error) {
     console.error("PATCH /users/:id/interests error:", error);
-    res
-      .status(400)
-      .json({
-        message: "Error updating interests",
-        error: error.message || error,
-      });
+    res.status(400).json({
+      message: "Error updating interests",
+      error: error.message || error,
+    });
   }
 });
 
@@ -255,12 +235,10 @@ router.get("/:id/home", async (req, res) => {
     res.json(user.home || {});
   } catch (error) {
     console.error("GET /users/:id/home error:", error);
-    res
-      .status(500)
-      .json({
-        message: "Error retrieving home info",
-        error: error.message || error,
-      });
+    res.status(500).json({
+      message: "Error retrieving home info",
+      error: error.message || error,
+    });
   }
 });
 
@@ -280,12 +258,10 @@ router.patch("/:id/home", async (req, res) => {
     res.json(formatUserResponse(req, updated));
   } catch (error) {
     console.error("PATCH /users/:id/home error:", error);
-    res
-      .status(400)
-      .json({
-        message: "Error updating home info",
-        error: error.message || error,
-      });
+    res.status(400).json({
+      message: "Error updating home info",
+      error: error.message || error,
+    });
   }
 });
 
@@ -318,12 +294,10 @@ router.patch("/:id/profile", async (req, res) => {
     res.json(formatUserResponse(req, updated));
   } catch (error) {
     console.error("PATCH /users/:id/profile error:", error);
-    res
-      .status(400)
-      .json({
-        message: "Error updating profile",
-        error: error.message || error,
-      });
+    res.status(400).json({
+      message: "Error updating profile",
+      error: error.message || error,
+    });
   }
 });
 
@@ -345,12 +319,10 @@ router.patch("/:id/preferences", async (req, res) => {
     res.json(formatUserResponse(req, updated));
   } catch (error) {
     console.error("PATCH /users/:id/preferences error:", error);
-    res
-      .status(400)
-      .json({
-        message: "Error updating preferences",
-        error: error.message || error,
-      });
+    res.status(400).json({
+      message: "Error updating preferences",
+      error: error.message || error,
+    });
   }
 });
 
@@ -360,7 +332,7 @@ router.patch("/:id/preferences", async (req, res) => {
 const profileUploadHandler = async (req, res) => {
   const { id } = req.params;
 
-  const profileImage = body.profileImage;
+  const profileImage = req.body.profileImage;
 
   const user = await User.findById(id);
   if (!user) return res.status(404).json({ message: "User not found" });
