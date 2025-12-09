@@ -1,315 +1,375 @@
-import express from 'express';
-import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import path from 'path';
-import fs from 'fs';
+import express from "express";
+import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import path from "path";
+import fs from "fs";
 // multer removed per request — profile uploads handled via JSON (filename or base64 data URL)
-import User from '../models/User.js';
+import User from "../models/User.js";
 
 const router = express.Router();
 
 // directory for uploads (still used when saving base64 uploads)
-const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+const uploadDir = path.join(process.cwd(), "public", "uploads");
 
 // Helper to make stored relative paths (e.g. /uploads/xxx.jpg) into absolute URLs
 const makeAbsoluteUrl = (req, p) => {
-	if (!p) return p;
-	if (typeof p !== 'string') return p;
-	if (p.startsWith('http://') || p.startsWith('https://')) return p;
-	// ensure leading slash
-	const pathPart = p.startsWith('/') ? p : `/${p}`;
-	return `${req.protocol}://${req.get('host')}${pathPart}`;
+  if (!p) return p;
+  if (typeof p !== "string") return p;
+  if (p.startsWith("http://") || p.startsWith("https://")) return p;
+  // ensure leading slash
+  const pathPart = p.startsWith("/") ? p : `/${p}`;
+  return `${req.protocol}://${req.get("host")}${pathPart}`;
 };
 
 const formatUserResponse = (req, data) => {
-	if (!data) return data;
-	const toObj = (u) => {
-		// u may already be a plain object or a mongoose doc
-		const obj = u && typeof u.toJSON === 'function' ? u.toJSON() : { ...u };
-		if (obj && obj.profileImage) obj.profileImage = makeAbsoluteUrl(req, obj.profileImage);
-		return obj;
-	};
-	if (Array.isArray(data)) return data.map(toObj);
-	return toObj(data);
+  if (!data) return data;
+  const toObj = (u) => {
+    // u may already be a plain object or a mongoose doc
+    const obj = u && typeof u.toJSON === "function" ? u.toJSON() : { ...u };
+    if (obj && obj.profileImage)
+      obj.profileImage = makeAbsoluteUrl(req, obj.profileImage);
+    return obj;
+  };
+  if (Array.isArray(data)) return data.map(toObj);
+  return toObj(data);
 };
 // GET /users — list users (without passwordHash)
-router.get('/', async (req, res) => {
-	console.log('GET /users called');
-	try {
-		const users = await User.find().select('-passwordHash');
-		console.log('GET /users result count:', Array.isArray(users) ? users.length : typeof users);
-		res.json(formatUserResponse(req, users));
-	} catch (error) {
-		console.error('GET /users error:', error);
-		if (error && error.stack) console.error(error.stack);
-		res.status(500).json({ message: 'Error retrieving users', error: error.message || error });
-	}
+router.get("/", async (req, res) => {
+  console.log("GET /users called");
+  try {
+    const users = await User.find().select("-passwordHash");
+    console.log(
+      "GET /users result count:",
+      Array.isArray(users) ? users.length : typeof users
+    );
+    res.json(formatUserResponse(req, users));
+  } catch (error) {
+    console.error("GET /users error:", error);
+    if (error && error.stack) console.error(error.stack);
+    res
+      .status(500)
+      .json({
+        message: "Error retrieving users",
+        error: error.message || error,
+      });
+  }
 });
 
 // GET /users/:id — single user
-router.get('/:id', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) {
-		return res.status(400).json({ message: 'Invalid user ID' });
-	}
+router.get("/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: "Invalid user ID" });
+  }
 
-	try {
-		const user = await User.findById(id).select('-passwordHash');
-		if (!user) return res.status(404).json({ message: 'User not found' });
-		res.json(formatUserResponse(req, user));
-	} catch (error) {
-		console.error('GET /users/:id error:', error);
-		res.status(500).json({ message: 'Error retrieving user', error: error.message || error });
-	}
+  try {
+    const user = await User.findById(id).select("-passwordHash");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(formatUserResponse(req, user));
+  } catch (error) {
+    console.error("GET /users/:id error:", error);
+    res
+      .status(500)
+      .json({
+        message: "Error retrieving user",
+        error: error.message || error,
+      });
+  }
 });
 
 // POST /users — create user (expects password, will be hashed)
 // Note: multer/multipart removed — registration accepts JSON only
-router.post('/', async (req, res) => {
-	const { name, email, password, birthdate, region, preferences, lifestyle, role } = req.body || {};
+router.post("/", async (req, res) => {
+  const {
+    name,
+    email,
+    password,
+    birthdate,
+    region,
+    preferences,
+    lifestyle,
+    role,
+  } = req.body || {};
 
-	if (!name || !email || !password || !birthdate) {
-		return res.status(400).json({ message: 'Missing required fields: name, email, password, birthdate' });
-	}
+  if (!name || !email || !password || !birthdate) {
+    return res
+      .status(400)
+      .json({
+        message: "Missing required fields: name, email, password, birthdate",
+      });
+  }
 
-	try {
-		const normalizedEmail = String(email).toLowerCase().trim();
-		const existing = await User.findOne({ email: normalizedEmail });
-		if (existing) return res.status(409).json({ message: 'Email already in use' });
+  try {
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const existing = await User.findOne({ email: normalizedEmail });
+    if (existing)
+      return res.status(409).json({ message: "Email already in use" });
 
-		const salt = await bcrypt.genSalt(10);
-		const passwordHash = await bcrypt.hash(password, salt);
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
 
-		const newUser = new User({
-			name,
-			email: normalizedEmail,
-			passwordHash,
-			birthdate,
-			region,
-			preferences,
-			lifestyle,
-			role,
-		});
+    const newUser = new User({
+      name,
+      email: normalizedEmail,
+      passwordHash,
+      birthdate,
+      region,
+      preferences,
+      lifestyle,
+      role,
+    });
 
-		const saved = await newUser.save();
-		res.status(201).json(formatUserResponse(req, saved));
-	} catch (error) {
-		console.error('POST /users error:', error);
-		if (error?.code === 11000) return res.status(409).json({ message: 'Duplicate key', error: error.message });
-		res.status(500).json({ message: 'Error adding user', error: error.message || error });
-	}
+    const saved = await newUser.save();
+    res.status(201).json(formatUserResponse(req, saved));
+  } catch (error) {
+    console.error("POST /users error:", error);
+    if (error?.code === 11000)
+      return res
+        .status(409)
+        .json({ message: "Duplicate key", error: error.message });
+    res
+      .status(500)
+      .json({ message: "Error adding user", error: error.message || error });
+  }
 });
 
 // POST /users/login — authenticate user with email + password
-router.post('/login', async (req, res) => {
-	// JSON-based login (default)
-	console.log('POST /users/login json handler: req.body=', req.body);
-	const { email, password } = req.body || {};
+router.post("/login", async (req, res) => {
+  // JSON-based login (default)
+  console.log("POST /users/login json handler: req.body=", req.body);
+  const { email, password } = req.body || {};
 
-	if (!email || !password) {
-		return res.status(400).json({ message: 'Email and password are required' });
-	}
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required" });
+  }
 
-	try {
-		const normalizedEmail = String(email).toLowerCase().trim();
-		const user = await User.findOne({ email: normalizedEmail });
+  try {
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
 
-		if (!user) {
-			return res.status(401).json({ message: 'Invalid email or password' });
-		}
+    if (!user) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
 
-		const ok = await bcrypt.compare(password, user.passwordHash);
-		if (!ok) return res.status(401).json({ message: 'Invalid email or password' });
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok)
+      return res.status(401).json({ message: "Invalid email or password" });
 
-		const safeUser = user.toJSON ? user.toJSON() : user;
-		const SECRET = process.env.JWT_SECRET || 'dev-secret-change-this';
-		const token = jwt.sign({ id: user._id.toString(), name: user.name }, SECRET, { expiresIn: '7d' });
-		res.json({ message: 'Login successful', token, user: formatUserResponse(req, safeUser) });
-	} catch (error) {
-		console.error('POST /users/login error:', error);
-		res.status(500).json({ message: 'Error during login', error: error.message || error });
-	}
+    const safeUser = user.toJSON ? user.toJSON() : user;
+    const SECRET = process.env.JWT_SECRET || "dev-secret-change-this";
+    const token = jwt.sign(
+      { id: user._id.toString(), name: user.name },
+      SECRET,
+      { expiresIn: "7d" }
+    );
+    res.json({
+      message: "Login successful",
+      token,
+      user: formatUserResponse(req, safeUser),
+    });
+  } catch (error) {
+    console.error("POST /users/login error:", error);
+    res
+      .status(500)
+      .json({ message: "Error during login", error: error.message || error });
+  }
 });
 
 // GET /users/:id/preferences - get user's preferences
-router.get('/:id/preferences', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+router.get("/:id/preferences", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    return res.status(400).json({ message: "Invalid user ID" });
 
-	try {
-		const user = await User.findById(id).select('preferences');
-		if (!user) return res.status(404).json({ message: 'User not found' });
-		res.json(user.preferences || {});
-	} catch (error) {
-		console.error('GET /users/:id/preferences error:', error);
-		res.status(500).json({ message: 'Error retrieving preferences', error: error.message || error });
-	}
+  try {
+    const user = await User.findById(id).select("preferences");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user.preferences || {});
+  } catch (error) {
+    console.error("GET /users/:id/preferences error:", error);
+    res
+      .status(500)
+      .json({
+        message: "Error retrieving preferences",
+        error: error.message || error,
+      });
+  }
 });
 
 // GET /users/:id/interests - get user's interests/profile selections
-router.get('/:id/interests', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+router.get("/:id/interests", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    return res.status(400).json({ message: "Invalid user ID" });
 
-	try {
-		const user = await User.findById(id).select('interests');
-		if (!user) return res.status(404).json({ message: 'User not found' });
-		res.json(user.interests || {});
-	} catch (error) {
-		console.error('GET /users/:id/interests error:', error);
-		res.status(500).json({ message: 'Error retrieving interests', error: error.message || error });
-	}
+  try {
+    const user = await User.findById(id).select("interests");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user.interests || {});
+  } catch (error) {
+    console.error("GET /users/:id/interests error:", error);
+    res
+      .status(500)
+      .json({
+        message: "Error retrieving interests",
+        error: error.message || error,
+      });
+  }
 });
 
 // PATCH /users/:id/interests - update user's interests
-router.patch('/:id/interests', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+router.patch("/:id/interests", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    return res.status(400).json({ message: "Invalid user ID" });
 
-	try {
-		const updated = await User.findByIdAndUpdate(id, { interests: req.body }, { new: true, runValidators: true }).select('-passwordHash');
-		if (!updated) return res.status(404).json({ message: 'User not found' });
-		res.json(formatUserResponse(req, updated));
-	} catch (error) {
-		console.error('PATCH /users/:id/interests error:', error);
-		res.status(400).json({ message: 'Error updating interests', error: error.message || error });
-	}
+  try {
+    const updated = await User.findByIdAndUpdate(
+      id,
+      { interests: req.body },
+      { new: true, runValidators: true }
+    ).select("-passwordHash");
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json(formatUserResponse(req, updated));
+  } catch (error) {
+    console.error("PATCH /users/:id/interests error:", error);
+    res
+      .status(400)
+      .json({
+        message: "Error updating interests",
+        error: error.message || error,
+      });
+  }
 });
 
 // GET /users/:id/home - get user's home situation
-router.get('/:id/home', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+router.get("/:id/home", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    return res.status(400).json({ message: "Invalid user ID" });
 
-	try {
-		const user = await User.findById(id).select('home');
-		if (!user) return res.status(404).json({ message: 'User not found' });
-		res.json(user.home || {});
-	} catch (error) {
-		console.error('GET /users/:id/home error:', error);
-		res.status(500).json({ message: 'Error retrieving home info', error: error.message || error });
-	}
+  try {
+    const user = await User.findById(id).select("home");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user.home || {});
+  } catch (error) {
+    console.error("GET /users/:id/home error:", error);
+    res
+      .status(500)
+      .json({
+        message: "Error retrieving home info",
+        error: error.message || error,
+      });
+  }
 });
 
 // PATCH /users/:id/home - update user's home situation
-router.patch('/:id/home', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+router.patch("/:id/home", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    return res.status(400).json({ message: "Invalid user ID" });
 
-	try {
-		const updated = await User.findByIdAndUpdate(id, { home: req.body }, { new: true, runValidators: true }).select('-passwordHash');
-		if (!updated) return res.status(404).json({ message: 'User not found' });
-		res.json(formatUserResponse(req, updated));
-	} catch (error) {
-		console.error('PATCH /users/:id/home error:', error);
-		res.status(400).json({ message: 'Error updating home info', error: error.message || error });
-	}
+  try {
+    const updated = await User.findByIdAndUpdate(
+      id,
+      { home: req.body },
+      { new: true, runValidators: true }
+    ).select("-passwordHash");
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json(formatUserResponse(req, updated));
+  } catch (error) {
+    console.error("PATCH /users/:id/home error:", error);
+    res
+      .status(400)
+      .json({
+        message: "Error updating home info",
+        error: error.message || error,
+      });
+  }
 });
 
 // PATCH /users/:id/profile - update multiple profile sections at once
 // Accepts any of { preferences, interests, home } in the body and updates only provided sections
-router.patch('/:id/profile', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+router.patch("/:id/profile", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    return res.status(400).json({ message: "Invalid user ID" });
 
-		const { preferences, interests, home } = req.body || {};
-		const update = {};
+  const { preferences, interests, home } = req.body || {};
+  const update = {};
 
-	if (preferences !== undefined) update.preferences = preferences;
-	if (interests !== undefined) update.interests = interests;
-	if (home !== undefined) update.home = home;
+  if (preferences !== undefined) update.preferences = preferences;
+  if (interests !== undefined) update.interests = interests;
+  if (home !== undefined) update.home = home;
 
-	if (Object.keys(update).length === 0) return res.status(400).json({ message: 'No profile fields provided to update' });
+  if (Object.keys(update).length === 0)
+    return res
+      .status(400)
+      .json({ message: "No profile fields provided to update" });
 
-	try {
-		const updated = await User.findByIdAndUpdate(id, { $set: update }, { new: true, runValidators: true }).select('-passwordHash');
-		if (!updated) return res.status(404).json({ message: 'User not found' });
-		res.json(formatUserResponse(req, updated));
-	} catch (error) {
-		console.error('PATCH /users/:id/profile error:', error);
-		res.status(400).json({ message: 'Error updating profile', error: error.message || error });
-	}
+  try {
+    const updated = await User.findByIdAndUpdate(
+      id,
+      { $set: update },
+      { new: true, runValidators: true }
+    ).select("-passwordHash");
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json(formatUserResponse(req, updated));
+  } catch (error) {
+    console.error("PATCH /users/:id/profile error:", error);
+    res
+      .status(400)
+      .json({
+        message: "Error updating profile",
+        error: error.message || error,
+      });
+  }
 });
 
 // PATCH /users/:id/preferences - update user's preferences
-router.patch('/:id/preferences', async (req, res) => {
-	const { id } = req.params;
-	if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+router.patch("/:id/preferences", async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id))
+    return res.status(400).json({ message: "Invalid user ID" });
 
-	try {
-		// Replace or set preferences object
-		const updated = await User.findByIdAndUpdate(
-			id,
-			{ preferences: req.body },
-			{ new: true, runValidators: true }
-		).select('-passwordHash');
+  try {
+    // Replace or set preferences object
+    const updated = await User.findByIdAndUpdate(
+      id,
+      { preferences: req.body },
+      { new: true, runValidators: true }
+    ).select("-passwordHash");
 
-		if (!updated) return res.status(404).json({ message: 'User not found' });
-		res.json(formatUserResponse(req, updated));
-	} catch (error) {
-		console.error('PATCH /users/:id/preferences error:', error);
-		res.status(400).json({ message: 'Error updating preferences', error: error.message || error });
-	}
+    if (!updated) return res.status(404).json({ message: "User not found" });
+    res.json(formatUserResponse(req, updated));
+  } catch (error) {
+    console.error("PATCH /users/:id/preferences error:", error);
+    res
+      .status(400)
+      .json({
+        message: "Error updating preferences",
+        error: error.message || error,
+      });
+  }
 });
 
-	// POST /users/:id/avatar and /users/:id/photo — upload profile image
-	// multer removed: accept JSON with either { filename } (already uploaded to /public/uploads)
-	// or { profileImage: 'data:image/...;base64,...' } (base64 data URL) which will be decoded and saved.
-	const profileUploadHandler = async (req, res) => {
-		const { id } = req.params;
-		// Debug: log incoming content-type and body keys to help diagnose missing payloads
-		console.log('profileUploadHandler called. content-type=', req.get('content-type'));
-		try { console.log('profileUploadHandler req.body keys=', Object.keys(req.body || {})); } catch (e) { console.log('profileUploadHandler req.body read error', e.message); }
-		if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: 'Invalid user ID' });
+// POST /users/:id/avatar and /users/:id/photo — upload profile image
+// multer removed: accept JSON with either { filename } (already uploaded to /public/uploads)
+// or { profileImage: 'data:image/...;base64,...' } (base64 data URL) which will be decoded and saved.
+const profileUploadHandler = async (req, res) => {
+  const { id } = req.params;
 
-		let file = null;
-		try {
-			const { profileImage, filename } = req.body || {};
-			if (profileImage && typeof profileImage === 'string') {
-				console.log('profileUploadHandler received profileImage length=', profileImage.length);
-			}
-			if (profileImage && typeof profileImage === 'string' && profileImage.startsWith('data:')) {
-				const matches = profileImage.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-				if (!matches) return res.status(400).json({ message: 'Invalid data URL' });
-				const mime = matches[1];
-				const base64 = matches[2];
-				const ext = mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp' : '.jpg';
-				const genFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-				const absPath = path.join(uploadDir, genFilename);
-				await fs.promises.writeFile(absPath, Buffer.from(base64, 'base64'));
-				file = { filename: genFilename };
-			} else if (filename && typeof filename === 'string') {
-				file = { filename: path.basename(filename) };
-			} else {
-				return res.status(400).json({ message: 'No file provided; send { filename } or { profileImage: dataURL } in JSON body' });
-			}
+  const profileImage = body.profileImage;
 
-			// ---- preserved update block (user requested to keep this) ----
-			try {
-				const filePath = `/uploads/${file.filename}`;
-				const updated = await User.findByIdAndUpdate(id, { profileImage: filePath }, { new: true }).select('-passwordHash');
-				if (!updated) {
-					if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-					return res.status(404).json({ message: 'User not found' });
-				}
-				return res.json(formatUserResponse(req, updated));
-			} catch (error) {
-				console.error('POST /users/:id/profile upload error:', error);
-				if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-				return res.status(500).json({ message: 'Error uploading profile image', error: error.message || error });
-			}
-			// ---- end preserved block ----
-		} catch (err) {
-			console.error('Profile upload handler error:', err);
-			if (file) try { fs.unlinkSync(path.join(uploadDir, file.filename)); } catch (e) {}
-			return res.status(500).json({ message: 'Unexpected error', error: err.message || err });
-		}
-	};
+  const user = await User.findById(id);
+  if (!user) return res.status(404).json({ message: "User not found" });
+  user.profileImage = profileImage;
+  await user.save();
+  res.json(formatUserResponse(req, user));
+};
 
-	router.post('/:id/avatar', profileUploadHandler);
-	router.post('/:id/photo', profileUploadHandler);
+router.post("/:id/avatar", profileUploadHandler);
+router.post("/:id/photo", profileUploadHandler);
 
 export default router;
-
-
