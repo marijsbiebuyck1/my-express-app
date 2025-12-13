@@ -15,13 +15,15 @@ import fs from "fs";
 import path from "path";
 
 const app = express();
+// Behind Render/other proxies we have to trust the proxy so req.protocol reflects HTTPS
+app.set("trust proxy", true);
 const PORT = process.env.PORT || 3001;
 
 // Middleware
 // Increase body size limits so frontend can send base64 image data URLs as JSON
-app.use(express.json({ limit: '10mb' })); // Use JSON as global data format
+app.use(express.json({ limit: "10mb" })); // Use JSON as global data format
 // Also accept URL-encoded bodies (useful for HTML forms or clients that send profileImage as a text field)
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(express.static("public")); // Make public folder accessible
 
 // Ensure uploads directory exists (useful for deployed environments)

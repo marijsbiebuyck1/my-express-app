@@ -7,6 +7,7 @@ import indexRouter from "./routes/index.js";
 import asielenRouter from "./routes/asielen.js";
 
 const app = express();
+app.set("trust proxy", true);
 // Prefer the platform-provided PORT, fall back to ADMIN_PORT then 3002
 const PORT = process.env.PORT || process.env.ADMIN_PORT || 3002;
 

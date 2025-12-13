@@ -10,12 +10,22 @@ const router = express.Router();
 // uploads directory (used when decoding base64 data-URLs)
 const uploadDir = path.join(process.cwd(), "public", "uploads");
 
+const resolveProtocol = (req) => {
+  const forwarded = req.get("x-forwarded-proto");
+  if (forwarded && typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.protocol || "http";
+};
+
 const makeAbsoluteUrl = (req, p) => {
   if (!p) return p;
   if (typeof p !== "string") return p;
   if (p.startsWith("http://") || p.startsWith("https://")) return p;
   const pathPart = p.startsWith("/") ? p : `/${p}`;
-  return `${req.protocol}://${req.get("host")}${pathPart}`;
+  const host = req.get("host") || req.headers.host;
+  if (!host) return pathPart;
+  return `${resolveProtocol(req)}://${host}${pathPart}`;
 };
 
 // POST /animals — create animal

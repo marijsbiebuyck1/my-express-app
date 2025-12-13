@@ -12,6 +12,14 @@ const router = express.Router();
 // directory for uploads (still used when saving base64 uploads)
 const uploadDir = path.join(process.cwd(), "public", "uploads");
 
+const resolveProtocol = (req) => {
+  const forwarded = req.get("x-forwarded-proto");
+  if (forwarded && typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.protocol || "http";
+};
+
 // Helper to make stored relative paths (e.g. /uploads/xxx.jpg) into absolute URLs
 const makeAbsoluteUrl = (req, p) => {
   if (!p) return p;
@@ -19,7 +27,9 @@ const makeAbsoluteUrl = (req, p) => {
   if (p.startsWith("http://") || p.startsWith("https://")) return p;
   // ensure leading slash
   const pathPart = p.startsWith("/") ? p : `/${p}`;
-  return `${req.protocol}://${req.get("host")}${pathPart}`;
+  const host = req.get("host") || req.headers.host;
+  if (!host) return pathPart;
+  return `${resolveProtocol(req)}://${host}${pathPart}`;
 };
 
 const formatUserResponse = (req, data) => {
