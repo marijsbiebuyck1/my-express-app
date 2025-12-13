@@ -1,11 +1,11 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const AttributesSchema = new mongoose.Schema(
   {
     species: { type: String },
     breed: { type: String },
-    sex: { type: String, enum: ['male', 'female', 'unknown'] },
-    size: { type: String, enum: ['small', 'medium', 'large', 'unknown'] },
+    sex: { type: String, enum: ["male", "female", "unknown"] },
+    size: { type: String, enum: ["small", "medium", "large", "unknown"] },
     characteristics: [{ type: String }],
     traits: [{ type: String }],
     notes: { type: String },
@@ -15,17 +15,26 @@ const AttributesSchema = new mongoose.Schema(
 
 const animalSchema = new mongoose.Schema(
   {
-    shelter: { type: mongoose.Schema.Types.ObjectId, ref: 'Shelter', required: false },
+    shelter: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Shelter",
+      required: false,
+    },
     name: { type: String, required: true },
     birthdate: { type: Date, required: true },
     photo: { type: String, required: true },
-    status: { type: String, enum: ['available', 'adopted', 'fostered', 'pending'], default: 'available' },
+    description: { type: String, default: "" },
+    status: {
+      type: String,
+      enum: ["available", "adopted", "fostered", "pending"],
+      default: "available",
+    },
     attributes: { type: AttributesSchema, default: {} },
   },
   { timestamps: true }
 );
 
-animalSchema.set('toJSON', {
+animalSchema.set("toJSON", {
   transform: (doc, ret) => {
     ret.id = ret._id?.toString();
     delete ret._id;
@@ -34,5 +43,5 @@ animalSchema.set('toJSON', {
   },
 });
 
-const Animal = mongoose.model('Animal', animalSchema);
+const Animal = mongoose.model("Animal", animalSchema);
 export default Animal;

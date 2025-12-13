@@ -1,68 +1,34 @@
 import express from "express";
-import path from "path";
-import fs from "fs";
 import Post from "../models/Post.js";
-import User from "../models/User.js";
 import auth from "../middleware/auth.js";
 
 const router = express.Router();
 
-// uploads directory (used when decoding base64 data-URLs)
-const uploadDir = path.join(process.cwd(), "public", "uploads");
-
-// Helper to convert stored relative paths into absolute URLs
-const makeAbsoluteUrl = (req, p) => {
-  if (!p) return p;
-  return p;
-};
-
-// Create a post (JSON): either provide { filename } referring to /public/uploads
-// or { image: 'data:image/...;base64,...' } which will be decoded and saved.
+// Create a post: accepts { image: 'data:image/...;base64,...', caption }
+// Image data is stored directly on the document (similar to user.profileImage).
 // Require authentication: author will be taken from the token (req.user.id)
 router.post("/", auth, async (req, res) => {
-  let file = null;
   try {
-    const { image, filename, caption } = req.body || {};
+    const { image, caption } = req.body || {};
 
-    if (image && typeof image === "string" && image.startsWith("data:")) {
-      const matches = image.match(
-        /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/
-      );
-      if (!matches)
-        return res.status(400).json({ error: "Invalid image data URL" });
-      const mime = matches[1];
-      const base64 = matches[2];
-      const ext = mime.includes("png")
-        ? ".png"
-        : mime.includes("webp")
-        ? ".webp"
-        : ".jpg";
-      const genFilename = `${Date.now()}-${Math.round(
-        Math.random() * 1e9
-      )}${ext}`;
-      const absPath = path.join(uploadDir, genFilename);
-      await fs.promises.writeFile(absPath, Buffer.from(base64, "base64"));
-      file = { filename: genFilename };
-    } else if (filename && typeof filename === "string") {
-      file = { filename: path.basename(filename) };
-    } else {
+    if (
+      !image ||
+      typeof image !== "string" ||
+      !image.trim().toLowerCase().startsWith("data:image")
+    ) {
       return res
         .status(400)
-        .json({ error: "Image is required (filename or data URL)" });
+        .json({ error: "Image data URL (data:image/...) is required" });
     }
 
-    const imagePath = `/uploads/${file.filename}`; // served from /public
+    const imageData = image.trim();
 
-    // Use authenticated user as author
     if (!req.user || !req.user.id) {
-      try {
-        if (file) await fs.promises.unlink(path.join(uploadDir, file.filename));
-      } catch (e) {}
       return res.status(401).json({ error: "Authentication required" });
     }
 
     const post = await Post.create({
-      image: imagePath,
+      image: imageData,
       caption,
       author: req.user.id,
     });
@@ -71,19 +37,9 @@ router.post("/", auth, async (req, res) => {
     const populated = await Post.findById(post._id)
       .populate("author", "name profileImage")
       .lean();
-    if (populated) {
-      populated.image = makeAbsoluteUrl(req, populated.image);
-      if (populated.author) {
-        populated.author.profileImage = makeAbsoluteUrl(
-          req,
-          populated.author.profileImage
-        );
-        // ensure author.id exists and remove internal _id if lean returned it
-        if (populated.author._id) {
-          populated.author.id = populated.author._id.toString();
-          delete populated.author._id;
-        }
-      }
+    if (populated && populated.author && populated.author._id) {
+      populated.author.id = populated.author._id.toString();
+      delete populated.author._id;
     }
 
     return res.status(201).json(populated || post);
@@ -107,12 +63,7 @@ router.get("/", async (req, res) => {
 
     const out = posts.map((p) => {
       const copy = { ...p };
-      copy.image = makeAbsoluteUrl(req, copy.image);
       if (copy.author) {
-        copy.author.profileImage = makeAbsoluteUrl(
-          req,
-          copy.author.profileImage
-        );
         if (copy.author._id) {
           copy.author.id = copy.author._id.toString();
           delete copy.author._id;
@@ -139,12 +90,13 @@ router.get("/:id", async (req, res) => {
     );
     if (!post) return res.status(404).json({ error: "Not found" });
     const postObj = post.toJSON ? post.toJSON() : post;
-    postObj.image = makeAbsoluteUrl(req, postObj.image);
     if (postObj.author) {
-      postObj.author.profileImage = makeAbsoluteUrl(
-        req,
-        postObj.author.profileImage
-      );
+      if (postObj.author._id) {
+        postObj.author.id = postObj.author._id.toString();
+        delete postObj.author._id;
+      }
+    } else {
+      postObj.author = { id: null, name: "Onbekend", profileImage: null };
     }
     return res.json(postObj);
   } catch (err) {

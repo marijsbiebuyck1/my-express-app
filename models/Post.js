@@ -1,9 +1,13 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const postSchema = new mongoose.Schema(
   {
-    author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: false },
-    image: { type: String, required: true }, // path to uploaded image in /public/uploads
+    author: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+    },
+    image: { type: String, required: true }, // base64 data URL (data:image/...) stored directly
     caption: { type: String },
     likes: { type: Number, default: 0 },
     comments: [
@@ -17,7 +21,7 @@ const postSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-postSchema.set('toJSON', {
+postSchema.set("toJSON", {
   transform: (doc, ret) => {
     ret.id = ret._id?.toString();
     delete ret._id;
@@ -26,5 +30,5 @@ postSchema.set('toJSON', {
   },
 });
 
-const Post = mongoose.model('Post', postSchema);
+const Post = mongoose.model("Post", postSchema);
 export default Post;
