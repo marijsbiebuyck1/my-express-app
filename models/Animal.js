@@ -22,7 +22,7 @@ const animalSchema = new mongoose.Schema(
     },
     name: { type: String, required: true },
     birthdate: { type: Date, required: true },
-  photo: { type: String },
+   photo: { type: String },
   description: { type: String, required: true },
     status: {
       type: String,

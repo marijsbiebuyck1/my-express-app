@@ -4,6 +4,8 @@ import path from "path";
 import fs from "fs";
 import Animal from "../models/Animal.js";
 import Shelter from "../models/Shelter.js";
+import User from "../models/User.js";
+import Message from "../models/Message.js";
 
 const router = express.Router();
 
@@ -320,3 +322,78 @@ router.delete("/", async (req, res) => {
 });
 
 export default router;
+
+// POST /animals/:id/match - register a match between a user and an animal
+// When a match is created, the animal sends a message to the user saying "dit is een match"
+router.post('/:id/match', async (req, res) => {
+  try {
+    const { id } = req.params; // animal id
+    if (!mongoose.Types.ObjectId.isValid(id))
+      return res.status(400).json({ message: 'Invalid animal id' });
+    const animal = await Animal.findById(id).lean();
+    if (!animal) return res.status(404).json({ message: 'Animal not found' });
+
+    // Accept userId in body or use req.user.id if available
+    const userId = req.body?.userId || (req.user && req.user.id);
+    if (!userId) return res.status(400).json({ message: 'userId required to register match' });
+    if (!mongoose.Types.ObjectId.isValid(userId))
+      return res.status(400).json({ message: 'Invalid userId' });
+    const user = await User.findById(userId).select('-passwordHash').lean();
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Build token sets for user preferences and animal attributes
+    const norm = (s) => (typeof s === 'string' ? s.trim().toLowerCase() : null);
+    const pushIf = (arr, v) => {
+      if (!v) return;
+      if (Array.isArray(v)) v.forEach((x) => x && arr.push(norm(x)));
+      else arr.push(norm(v));
+    };
+
+    const userTokens = [];
+    // preferences: preferredSpecies, characteristics, traits
+    const prefs = user.preferences || {};
+    pushIf(userTokens, prefs.preferredSpecies || []);
+    pushIf(userTokens, prefs.characteristics || []);
+    pushIf(userTokens, prefs.traits || []);
+
+    // animal tokens
+    const animalTokens = [];
+    const attrs = animal.attributes || {};
+    pushIf(animalTokens, attrs.species);
+    pushIf(animalTokens, attrs.breed);
+    pushIf(animalTokens, attrs.size);
+    pushIf(animalTokens, attrs.characteristics || []);
+    pushIf(animalTokens, attrs.traits || []);
+
+    // Remove nulls and duplicates
+    const clean = (arr) => Array.from(new Set(arr.filter((x) => typeof x === 'string' && x.length > 0)));
+    const aTokens = clean(animalTokens);
+    const uTokens = clean(userTokens);
+
+    // compute Jaccard similarity
+    const intersect = aTokens.filter((t) => uTokens.includes(t)).length;
+    const unionCount = Math.max(1, new Set([...aTokens, ...uTokens]).size);
+    const similarity = intersect / unionCount;
+
+    // threshold 0.9 (90%)
+    const threshold = 0.9;
+    if (similarity < threshold) {
+      return res.status(200).json({ match: false, similarity });
+    }
+
+    // Create message from animal -> user
+    const msg = await Message.create({
+      fromKind: 'animal',
+      fromId: animal._id,
+      toKind: 'user',
+      toId: user._id,
+      animal: animal._id,
+      text: 'dit is een match',
+    });
+
+    return res.status(201).json({ match: true, similarity, message: msg });
+  } catch (e) {
+    console.error('POST /animals/:id/match error:', e);
+    return res.status(500).json({ message: 'Server error', error: e.message || e });
+  }
+});
