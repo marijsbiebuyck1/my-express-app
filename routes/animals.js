@@ -29,8 +29,8 @@ const makeAbsoluteUrl = (req, p) => {
 };
 
 // POST /animals — create animal
-// Accept either { filename } referring to /public/uploads or { image: 'data:...;base64,...' }
-// Also accept shelterId aliases (shelterId, shelterID, shelterid)
+// Accept optional { filename } referring to /public/uploads or optional { image: 'data:...;base64,...' }
+// Description is required. Also accept shelterId aliases (shelterId, shelterID, shelterid)
 router.post("/", async (req, res) => {
   let file = null;
   try {
@@ -41,10 +41,11 @@ router.post("/", async (req, res) => {
     const shelterId =
       req.body?.shelterId ?? req.body?.shelterID ?? req.body?.shelterid;
 
-    if (!name || !birthdate || !shelterId)
-      return res
-        .status(400)
-        .json({ message: "name, birthdate and shelterId are required" });
+    // Require name, birthdate, shelterId and a non-empty description
+    if (!name || !birthdate || !shelterId || !normalizedDescription)
+      return res.status(400).json({
+        message: "name, birthdate, shelterId and description are required",
+      });
     if (!mongoose.Types.ObjectId.isValid(shelterId))
       return res.status(400).json({ message: "Invalid shelterId" });
 
@@ -82,10 +83,6 @@ router.post("/", async (req, res) => {
       file = { filename: genFilename };
     } else if (filename && typeof filename === "string") {
       file = { filename: path.basename(filename) };
-    } else {
-      return res
-        .status(400)
-        .json({ message: "Photo is required (filename or data URL)" });
     }
 
     const shelter = await Shelter.findById(shelterId).select("-passwordHash");
@@ -97,16 +94,18 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ message: "Shelter not found" });
     }
 
-    const filePath = `/uploads/${file.filename}`;
+    const filePath = file ? `/uploads/${file.filename}` : undefined;
 
-    const animal = await Animal.create({
+    const createData = {
       shelter: shelter._id,
       name,
       birthdate: new Date(birthdate),
-      photo: filePath,
       description: normalizedDescription,
       attributes: parsedAttributes,
-    });
+    };
+    if (filePath) createData.photo = filePath;
+
+    const animal = await Animal.create(createData);
 
     const obj = animal.toJSON ? animal.toJSON() : animal;
     obj.photo = makeAbsoluteUrl(req, obj.photo);
