@@ -106,7 +106,6 @@ router.post("/", async (req, res) => {
       attributes: parsedAttributes,
       photo: image,
     };
-    if (filePath) createData.photo = filePath;
 
     const animal = await Animal.create(createData);
 
