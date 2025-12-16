@@ -21,13 +21,7 @@ const resolveProtocol = (req) => {
 };
 
 const makeAbsoluteUrl = (req, p) => {
-  if (!p) return p;
-  if (typeof p !== "string") return p;
-  if (p.startsWith("http://") || p.startsWith("https://")) return p;
-  const pathPart = p.startsWith("/") ? p : `/${p}`;
-  const host = req.get("host") || req.headers.host;
-  if (!host) return pathPart;
-  return `${resolveProtocol(req)}://${host}${pathPart}`;
+  return p;
 };
 
 // POST /animals — create animal
