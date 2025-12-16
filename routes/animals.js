@@ -104,6 +104,7 @@ router.post("/", async (req, res) => {
       birthdate: new Date(birthdate),
       description: normalizedDescription,
       attributes: parsedAttributes,
+      photo: image,
     };
     if (filePath) createData.photo = filePath;
 
