@@ -1,45 +1,46 @@
-#!/usr/bin/env node
+import dotenv from 'dotenv';
+dotenv.config();
+
 import mongoose from 'mongoose';
 import Message from '../models/Message.js';
 
 async function main() {
-  const argv = process.argv.slice(2);
-  const maybeUri = process.env.MONGO_URI || argv[0];
-  if (!maybeUri) {
-    console.error("Missing MONGO_URI. Usage: MONGO_URI='...' node scripts/delete-messages.js [--yes]");
-    process.exit(1);
-  }
+	const doDelete = process.argv.includes('--yes') || process.argv.includes('-y');
 
-  const uri = maybeUri;
-  console.log('Connecting to Mongo...');
-  await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+	console.log('Connecting to MongoDB...');
+	await mongoose.connect(process.env.MONGO_URI, {
+		useNewUrlParser: true,
+		useUnifiedTopology: true,
+	});
 
-  try {
-    const total = await Message.countDocuments();
-    console.log(`Messages total: ${total}`);
+	try {
+		const count = await Message.countDocuments();
+		console.log(`Found ${count} message(s) in the database.`);
 
-    const sample = await Message.find().limit(10).lean();
-    console.log('Sample (up to 10):');
-    console.log(JSON.stringify(sample, null, 2));
+		if (count === 0) {
+			console.log('No messages to delete.');
+			await mongoose.disconnect();
+			return;
+		}
 
-    const confirmed = process.env.CONFIRM === '1' || argv.includes('--yes') || argv.includes('-y');
-    if (!confirmed) {
-      console.log('\nDry run only. To actually delete run with CONFIRM=1 or --yes:');
-      console.log("  CONFIRM=1 MONGO_URI=\"<uri>\" node scripts/delete-messages.js");
-      console.log('  OR');
-      console.log('  MONGO_URI="<uri>" node scripts/delete-messages.js --yes');
-      process.exit(0);
-    }
+		if (!doDelete) {
+			console.log('Dry run: no messages were deleted.');
+			console.log('To delete all messages, re-run with --yes (or -y).');
+			await mongoose.disconnect();
+			return;
+		}
 
-    console.log('Deleting messages...');
-    const res = await Message.deleteMany({});
-    console.log(`Deleted ${res.deletedCount} messages.`);
-  } catch (err) {
-    console.error('Error:', err && (err.stack || err.message || err));
-  } finally {
-    await mongoose.disconnect();
-    process.exit(0);
-  }
+		const res = await Message.deleteMany({});
+		console.log(`Deleted ${res.deletedCount ?? res.n ?? 'unknown'} message(s).`);
+	} catch (err) {
+		console.error('Error deleting messages:', err);
+	} finally {
+		await mongoose.disconnect();
+	}
 }
 
-main();
+main().catch((err) => {
+	console.error('Fatal error:', err);
+	process.exit(1);
+});
+
