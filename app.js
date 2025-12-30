@@ -11,6 +11,7 @@ import postsRouter from "./routes/posts.js";
 import asielenRouter from "./routes/asielen.js";
 import animalsRouter from "./routes/animals.js";
 import uploadsRouter from "./routes/uploads.js";
+import conversationsRouter from "./routes/conversations.js";
 import fs from "fs";
 import path from "path";
 
@@ -53,6 +54,7 @@ app.use("/posts", postsRouter);
 app.use("/asielen", asielenRouter);
 app.use("/animals", animalsRouter);
 app.use("/uploads", uploadsRouter);
+app.use("/conversations", conversationsRouter);
 // pets routes removed — implement later if needed
 
 // Start server
