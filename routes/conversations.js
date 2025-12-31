@@ -9,6 +9,15 @@ const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-this";
 
+const makeAbsoluteUrl = (req, value) => {
+  if (!value || typeof value !== "string") return value;
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value;
+  }
+  const normalized = value.startsWith("/") ? value : `/${value}`;
+  return `${req.protocol}://${req.get("host")}${normalized}`;
+};
+
 const buildConversationKey = (conversation) => {
   const animalId = conversation?.animal?.toString?.()
     ? conversation.animal.toString()
@@ -97,16 +106,32 @@ async function upsertConversation(identity, animalId) {
     shelter: animal.shelter || null,
   };
 
-  if (identity.userId) {
+  const hasUser = Boolean(identity.userId);
+  const hasDevice = Boolean(identity.deviceKey);
+  if (hasUser) {
     updates.user = identity.userId;
   }
-  if (identity.deviceKey) {
+  if (hasDevice) {
     updates.deviceKey = identity.deviceKey;
   }
 
-  const filter = identity.userId
-    ? { user: identity.userId, animal: animalId }
-    : { deviceKey: identity.deviceKey, animal: animalId };
+  let filter;
+  if (hasUser) {
+    const clauses = [{ user: identity.userId }];
+    if (hasDevice) {
+      clauses.push({ deviceKey: identity.deviceKey });
+    }
+    if (clauses.length === 1) {
+      filter = { ...clauses[0], animal: animalId };
+    } else {
+      filter = {
+        animal: animalId,
+        $or: clauses,
+      };
+    }
+  } else {
+    filter = { deviceKey: identity.deviceKey, animal: animalId };
+  }
 
   const conversation = await Conversation.findOneAndUpdate(
     filter,
@@ -118,10 +143,28 @@ async function upsertConversation(identity, animalId) {
 }
 
 async function findConversation(identity, animalId) {
-  const filter = identity.userId
-    ? { user: identity.userId, animal: animalId }
-    : { deviceKey: identity.deviceKey, animal: animalId };
-  const convo = await Conversation.findOne(filter);
+  const base = { animal: animalId };
+  let convo = null;
+
+  if (identity.userId) {
+    convo = await Conversation.findOne({ ...base, user: identity.userId });
+    if (!convo && identity.deviceKey) {
+      convo = await Conversation.findOne({
+        ...base,
+        deviceKey: identity.deviceKey,
+      });
+      if (convo && !convo.user) {
+        convo.user = identity.userId;
+        await convo.save();
+      }
+    }
+  } else if (identity.deviceKey) {
+    convo = await Conversation.findOne({
+      ...base,
+      deviceKey: identity.deviceKey,
+    });
+  }
+
   if (!convo) {
     const err = new Error("CONVERSATION_NOT_FOUND");
     err.statusCode = 404;
@@ -158,6 +201,10 @@ async function createMessage({ conversation, sender, text, displayName }) {
 
   const fromKind = sender?.kind === "shelter" ? "shelter" : "user";
   const toKind = fromKind === "shelter" ? "user" : "shelter";
+
+  if (sender?.kind === "user" && sender?.id && !conversation.user) {
+    conversation.user = sender.id;
+  }
 
   const message = await Message.create({
     conversation: conversation._id,
@@ -249,6 +296,9 @@ router.get("/", async (req, res) => {
           : item.deviceKey
           ? `Onbekende gebruiker (${String(item.deviceKey).slice(-4)})`
           : "Onbekende gebruiker";
+        const participantAvatar = userEntity?.profileImage
+          ? makeAbsoluteUrl(req, userEntity.profileImage)
+          : null;
         return {
           id: item._id?.toString(),
           animalId: item.animal?.toString(),
@@ -256,10 +306,11 @@ router.get("/", async (req, res) => {
           userId:
             userEntity?._id?.toString?.() || item.user?.toString?.() || null,
           userName: participantName,
+          userAvatar: participantAvatar,
           lastMessage: item.lastMessage || "",
           lastMessageAt: item.lastMessageAt,
           matchedAt: item.matchedAt,
-          avatar: item.animalPhoto || null,
+          avatar: participantAvatar,
         };
       });
       return res.json(mapped);
