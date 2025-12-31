@@ -13,6 +13,7 @@ const messageSchema = new mongoose.Schema(
     },
     deviceKey: { type: String, index: true },
     animal: { type: mongoose.Schema.Types.ObjectId, ref: "Animal" },
+    shelter: { type: mongoose.Schema.Types.ObjectId, ref: "Shelter" },
     fromKind: {
       type: String,
       enum: ["user", "shelter", "animal", "system"],

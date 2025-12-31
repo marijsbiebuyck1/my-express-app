@@ -9,10 +9,23 @@ const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-this";
 
-const buildConversationKey = (identity, animalId) =>
-  identity.userId
-    ? `${identity.userId}:${animalId}`
-    : `device:${identity.deviceKey}:${animalId}`;
+const buildConversationKey = (conversation) => {
+  const animalId = conversation?.animal?.toString?.()
+    ? conversation.animal.toString()
+    : conversation?.animal;
+  if (conversation?.user) {
+    return `${conversation.user.toString?.() ?? conversation.user}:${animalId}`;
+  }
+  if (conversation?.deviceKey) {
+    return `device:${conversation.deviceKey}:${animalId}`;
+  }
+  if (conversation?.shelter) {
+    return `shelter:${
+      conversation.shelter.toString?.() ?? conversation.shelter
+    }:${animalId}`;
+  }
+  return conversation?._id?.toString?.() ?? String(animalId);
+};
 
 function readHeader(req, name) {
   return (
@@ -45,6 +58,15 @@ function resolveIdentity(req) {
     mongoose.Types.ObjectId.isValid(String(fallbackUserId).trim())
   ) {
     return { userId: String(fallbackUserId).trim() };
+  }
+
+  const shelterHeader =
+    readHeader(req, "x-shelter-id") || readHeader(req, "x-admin-id");
+  if (shelterHeader) {
+    const clean = String(shelterHeader).trim();
+    if (mongoose.Types.ObjectId.isValid(clean)) {
+      return { shelterId: clean };
+    }
   }
 
   const deviceKey = readHeader(req, "x-device-key");
@@ -108,35 +130,51 @@ async function findConversation(identity, animalId) {
   return convo;
 }
 
-async function createMessage({
-  conversation,
-  identity,
-  animalId,
-  text,
-  senderKind = "user",
-  displayName,
-}) {
-  const fromKind = senderKind === "user" ? "user" : senderKind;
-  const toKind = fromKind === "user" ? "shelter" : "user";
+async function findConversationById(conversationId, shelterId) {
+  if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+    const err = new Error("Invalid conversation id");
+    err.statusCode = 400;
+    throw err;
+  }
+  const convo = await Conversation.findOne({
+    _id: conversationId,
+    shelter: shelterId,
+  });
+  if (!convo) {
+    const err = new Error("CONVERSATION_NOT_FOUND");
+    err.statusCode = 404;
+    throw err;
+  }
+  return convo;
+}
+
+async function createMessage({ conversation, sender, text, displayName }) {
+  const normalizedText = String(text || "").trim();
+  if (!normalizedText) {
+    const err = new Error("Text is required");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const fromKind = sender?.kind === "shelter" ? "shelter" : "user";
+  const toKind = fromKind === "shelter" ? "user" : "shelter";
+
   const message = await Message.create({
     conversation: conversation._id,
-    conversationKey: buildConversationKey(identity, animalId),
-    user: identity.userId,
-    deviceKey: identity.deviceKey,
-    animal: animalId,
+    conversationKey: buildConversationKey(conversation),
+    user: conversation.user || undefined,
+    deviceKey: conversation.deviceKey || undefined,
+    animal: conversation.animal,
+    shelter: conversation.shelter || undefined,
     fromKind,
-    fromId:
-      fromKind === "user" && identity.userId ? identity.userId : undefined,
+    fromId: sender?.id,
     toKind,
-    toId:
-      toKind === "user" && identity.userId
-        ? identity.userId
-        : conversation.shelter,
-    text,
+    toId: toKind === "user" ? conversation.user : conversation.shelter,
+    text: normalizedText,
     authorDisplayName: displayName,
   });
 
-  conversation.lastMessage = text;
+  conversation.lastMessage = normalizedText;
   conversation.lastMessageAt = message.createdAt;
   await conversation.save();
 
@@ -158,10 +196,10 @@ router.post("/", async (req, res) => {
       if (!conversation.autoMessageSent) {
         messageDoc = await createMessage({
           conversation,
-          identity,
-          animalId,
-          text: autoMessage.trim(),
-          senderKind: "user",
+          sender: identity.shelterId
+            ? { kind: "shelter", id: identity.shelterId }
+            : { kind: "user", id: identity.userId },
+          text: autoMessage,
           displayName: req.user?.name,
         });
         conversation.autoMessageSent = true;
@@ -182,6 +220,51 @@ router.post("/", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const identity = resolveIdentity(req);
+    if (identity.shelterId) {
+      const { animalId, userId } = req.query || {};
+      const filter = { shelter: identity.shelterId };
+      if (animalId) {
+        if (!mongoose.Types.ObjectId.isValid(String(animalId))) {
+          return res.status(400).json({ message: "Invalid animalId" });
+        }
+        filter.animal = String(animalId);
+      }
+      if (userId) {
+        if (!mongoose.Types.ObjectId.isValid(String(userId))) {
+          return res.status(400).json({ message: "Invalid userId" });
+        }
+        filter.user = String(userId);
+      }
+
+      const list = await Conversation.find(filter)
+        .sort({ updatedAt: -1 })
+        .populate("user", "name profileImage")
+        .lean();
+
+      const mapped = list.map((item) => {
+        const userEntity =
+          item.user && typeof item.user === "object" ? item.user : null;
+        const participantName = userEntity?.name
+          ? userEntity.name
+          : item.deviceKey
+          ? `Onbekende gebruiker (${String(item.deviceKey).slice(-4)})`
+          : "Onbekende gebruiker";
+        return {
+          id: item._id?.toString(),
+          animalId: item.animal?.toString(),
+          animalName: item.animalName || "Onbekend dier",
+          userId:
+            userEntity?._id?.toString?.() || item.user?.toString?.() || null,
+          userName: participantName,
+          lastMessage: item.lastMessage || "",
+          lastMessageAt: item.lastMessageAt,
+          matchedAt: item.matchedAt,
+          avatar: item.animalPhoto || null,
+        };
+      });
+      return res.json(mapped);
+    }
+
     const filter = identity.userId
       ? { user: identity.userId }
       : { deviceKey: identity.deviceKey };
@@ -201,15 +284,24 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.get("/:animalId/messages", async (req, res) => {
+router.get("/:conversationOrAnimalId/messages", async (req, res) => {
   try {
     const identity = resolveIdentity(req);
-    const { animalId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(animalId)) {
-      return res.status(400).json({ message: "Invalid animalId" });
+    const { conversationOrAnimalId } = req.params;
+
+    let conversation;
+    if (identity.shelterId) {
+      conversation = await findConversationById(
+        conversationOrAnimalId,
+        identity.shelterId
+      );
+    } else {
+      if (!mongoose.Types.ObjectId.isValid(conversationOrAnimalId)) {
+        return res.status(400).json({ message: "Invalid animalId" });
+      }
+      conversation = await findConversation(identity, conversationOrAnimalId);
     }
 
-    const conversation = await findConversation(identity, animalId);
     const messages = await Message.find({ conversation: conversation._id })
       .sort({ createdAt: 1 })
       .lean();
@@ -230,26 +322,45 @@ router.get("/:animalId/messages", async (req, res) => {
   }
 });
 
-router.post("/:animalId/messages", async (req, res) => {
+router.post("/:conversationOrAnimalId/messages", async (req, res) => {
   try {
     const identity = resolveIdentity(req);
-    const { animalId } = req.params;
+    const { conversationOrAnimalId } = req.params;
     const { text } = req.body || {};
-    if (!mongoose.Types.ObjectId.isValid(animalId)) {
-      return res.status(400).json({ message: "Invalid animalId" });
-    }
     if (!text || !String(text).trim().length) {
       return res.status(400).json({ message: "Text is required" });
     }
 
-    const { conversation } = await upsertConversation(identity, animalId);
+    let conversation;
+    if (identity.shelterId) {
+      conversation = await findConversationById(
+        conversationOrAnimalId,
+        identity.shelterId
+      );
+    } else {
+      if (!mongoose.Types.ObjectId.isValid(conversationOrAnimalId)) {
+        return res.status(400).json({ message: "Invalid animalId" });
+      }
+      ({ conversation } = await upsertConversation(
+        identity,
+        conversationOrAnimalId
+      ));
+    }
+
+    const sender = identity.shelterId
+      ? { kind: "shelter", id: identity.shelterId }
+      : { kind: "user", id: identity.userId };
+    const shelterNameHeader = identity.shelterId
+      ? readHeader(req, "x-shelter-name")
+      : null;
+
     const message = await createMessage({
       conversation,
-      identity,
-      animalId,
-      text: String(text).trim(),
-      senderKind: "user",
-      displayName: req.user?.name,
+      sender,
+      text,
+      displayName: identity.shelterId
+        ? shelterNameHeader || "Asiel"
+        : req.user?.name,
     });
 
     return res.status(201).json(message.toJSON());

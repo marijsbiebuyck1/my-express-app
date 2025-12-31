@@ -40,12 +40,15 @@ conversationSchema.index(
     partialFilterExpression: { deviceKey: { $exists: true, $ne: null } },
   }
 );
+conversationSchema.index({ shelter: 1, animal: 1, user: 1 });
+conversationSchema.index({ shelter: 1, updatedAt: -1 });
 
 conversationSchema.set("toJSON", {
   transform: (doc, ret) => {
     ret.id = ret._id?.toString();
     if (ret.user) ret.userId = ret.user?.toString();
     if (ret.animal) ret.animalId = ret.animal?.toString();
+    if (ret.shelter) ret.shelterId = ret.shelter?.toString();
     delete ret._id;
     delete ret.__v;
     return ret;
