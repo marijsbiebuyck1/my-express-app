@@ -98,6 +98,17 @@ async function fetchAnimal(animalId) {
   return animal;
 }
 
+async function attachUserToDeviceConversations(identity) {
+  if (!identity?.userId || !identity?.deviceKey) return;
+  await Conversation.updateMany(
+    {
+      deviceKey: identity.deviceKey,
+      $or: [{ user: { $exists: false } }, { user: null }],
+    },
+    { $set: { user: identity.userId } }
+  );
+}
+
 async function upsertConversation(identity, animalId) {
   const animal = await fetchAnimal(animalId);
   const updates = {
@@ -145,6 +156,10 @@ async function upsertConversation(identity, animalId) {
 async function findConversation(identity, animalId) {
   const base = { animal: animalId };
   let convo = null;
+
+  if (identity.userId && identity.deviceKey) {
+    await attachUserToDeviceConversations(identity);
+  }
 
   if (identity.userId) {
     convo = await Conversation.findOne({ ...base, user: identity.userId });
@@ -316,9 +331,18 @@ router.get("/", async (req, res) => {
       return res.json(mapped);
     }
 
-    const filter = identity.userId
-      ? { user: identity.userId }
-      : { deviceKey: identity.deviceKey };
+    await attachUserToDeviceConversations(identity);
+
+    const clauses = [];
+    if (identity.userId) {
+      clauses.push({ user: identity.userId });
+    }
+    if (identity.deviceKey) {
+      clauses.push({ deviceKey: identity.deviceKey });
+    }
+    const filter =
+      clauses.length > 1 ? { $or: clauses } : clauses[0] || { _id: null };
+
     const list = await Conversation.find(filter).sort({ updatedAt: -1 }).lean();
     const mapped = list.map((item) => ({
       id: item._id?.toString(),
