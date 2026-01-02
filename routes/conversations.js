@@ -253,6 +253,7 @@ async function createMessage({ conversation, sender, text, displayName }) {
     toId: toKind === "user" ? conversation.user : conversation.shelter,
     text: normalizedText,
     authorDisplayName: displayName,
+    authorProfileImage: displayName && sender?.kind === "animal" ? conversation.animalPhoto || null : undefined,
   });
 
   conversation.lastMessage = normalizedText;
@@ -278,17 +279,35 @@ router.post("/", async (req, res) => {
     }
 
     // Only shelter or device (or server-side) may upsert/start a conversation.
-    const { conversation } = await upsertConversation(identity, animalId);
+    // If a shelter is starting the conversation on behalf of a matched user,
+    // they may pass a userId in the body to link the conversation to that user.
+    let upsertIdentity = { ...identity };
+    if (identity.shelterId) {
+      const { userId } = req.body || {};
+      if (userId) {
+        if (!mongoose.Types.ObjectId.isValid(String(userId))) {
+          return res.status(400).json({ message: "Invalid userId" });
+        }
+        upsertIdentity.userId = String(userId);
+      }
+    }
+
+    const { conversation, animal } = await upsertConversation(
+      upsertIdentity,
+      animalId
+    );
 
     let messageDoc = null;
     if (typeof autoMessage === "string" && autoMessage.trim().length) {
       if (!conversation.autoMessageSent) {
-        // Auto message must be sent from the animal
+        // Auto message must be sent from the animal. Use the animal's name as displayName
+        // and ensure the conversation has animal info populated by upsertConversation.
+        const displayName = animal?.name || null;
         messageDoc = await createMessage({
           conversation,
           sender: { kind: "animal" },
           text: autoMessage,
-          displayName: null,
+          displayName,
         });
         conversation.autoMessageSent = true;
         await conversation.save();
