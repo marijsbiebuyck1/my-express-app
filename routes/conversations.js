@@ -489,3 +489,38 @@ router.post("/:conversationOrAnimalId/messages", async (req, res) => {
 });
 
 export default router;
+
+// DELETE a conversation (remove a match). Allowed for shelter owning the conversation or the matched user.
+router.delete("/:id", async (req, res) => {
+  try {
+    const identity = resolveIdentity(req);
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid conversation id" });
+    }
+
+    let convo = null;
+    if (identity.shelterId) {
+      convo = await Conversation.findOne({ _id: id, shelter: identity.shelterId });
+    } else if (identity.userId) {
+      convo = await Conversation.findOne({ _id: id, user: identity.userId });
+    } else if (identity.deviceKey) {
+      convo = await Conversation.findOne({ _id: id, deviceKey: identity.deviceKey });
+    }
+
+    if (!convo) {
+      const err = new Error("CONVERSATION_NOT_FOUND");
+      err.statusCode = 404;
+      throw err;
+    }
+
+    // delete related messages first
+    await Message.deleteMany({ conversation: convo._id });
+    await Conversation.deleteOne({ _id: convo._id });
+
+    return res.json({ success: true });
+  } catch (err) {
+    const status = err?.statusCode || 500;
+    return res.status(status).json({ message: err?.message || "Server error" });
+  }
+});
