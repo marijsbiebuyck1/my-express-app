@@ -214,12 +214,31 @@ async function createMessage({ conversation, sender, text, displayName }) {
     throw err;
   }
 
-  const fromKind = sender?.kind === "shelter" ? "shelter" : "user";
-  const toKind = fromKind === "shelter" ? "user" : "shelter";
+  // support shelter, user and animal as senders
+  const fromKind =
+    sender?.kind === "shelter"
+      ? "shelter"
+      : sender?.kind === "animal"
+      ? "animal"
+      : "user";
+
+  // determine recipient kind
+  let toKind;
+  if (fromKind === "shelter") {
+    toKind = "user";
+  } else if (fromKind === "animal") {
+    // animal messages should go to the user if present, otherwise to shelter
+    toKind = conversation.user ? "user" : "shelter";
+  } else {
+    toKind = "shelter";
+  }
 
   if (sender?.kind === "user" && sender?.id && !conversation.user) {
     conversation.user = sender.id;
   }
+
+  // fromId: for animal messages use the conversation.animal id, otherwise use sender.id
+  const fromId = sender?.kind === "animal" ? conversation.animal : sender?.id;
 
   const message = await Message.create({
     conversation: conversation._id,
@@ -229,7 +248,7 @@ async function createMessage({ conversation, sender, text, displayName }) {
     animal: conversation.animal,
     shelter: conversation.shelter || undefined,
     fromKind,
-    fromId: sender?.id,
+    fromId,
     toKind,
     toId: toKind === "user" ? conversation.user : conversation.shelter,
     text: normalizedText,
@@ -251,18 +270,25 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ message: "Valid animalId is required" });
     }
 
+    // Users are NOT allowed to start a conversation
+    if (identity.userId) {
+      return res
+        .status(403)
+        .json({ message: "Users are not allowed to start conversations" });
+    }
+
+    // Only shelter or device (or server-side) may upsert/start a conversation.
     const { conversation } = await upsertConversation(identity, animalId);
 
     let messageDoc = null;
     if (typeof autoMessage === "string" && autoMessage.trim().length) {
       if (!conversation.autoMessageSent) {
+        // Auto message must be sent from the animal
         messageDoc = await createMessage({
           conversation,
-          sender: identity.shelterId
-            ? { kind: "shelter", id: identity.shelterId }
-            : { kind: "user", id: identity.userId },
+          sender: { kind: "animal" },
           text: autoMessage,
-          displayName: req.user?.name,
+          displayName: null,
         });
         conversation.autoMessageSent = true;
         await conversation.save();
@@ -416,10 +442,8 @@ router.post("/:conversationOrAnimalId/messages", async (req, res) => {
       if (!mongoose.Types.ObjectId.isValid(conversationOrAnimalId)) {
         return res.status(400).json({ message: "Invalid animalId" });
       }
-      ({ conversation } = await upsertConversation(
-        identity,
-        conversationOrAnimalId
-      ));
+      // Users must reply to an existing conversation; do not create on reply
+      conversation = await findConversation(identity, conversationOrAnimalId);
     }
 
     const sender = identity.shelterId
