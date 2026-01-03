@@ -58,6 +58,35 @@ router.post("/", async (req, res) => {
       }
     }
 
+    // validate a few new attribute fields if present
+    if (parsedAttributes) {
+      if (parsedAttributes.childrenCompatibility) {
+        const allowed = [
+          "no",
+          "younger_than_6",
+          "6_to_14",
+          "14_plus",
+        ];
+        if (!allowed.includes(parsedAttributes.childrenCompatibility)) {
+          return res
+            .status(400)
+            .json({ message: "Invalid childrenCompatibility value" });
+        }
+      }
+      if (parsedAttributes.catType) {
+        const allowedCatTypes = ["indoor", "outdoor", "cuddle", "farm"];
+        if (!allowedCatTypes.includes(parsedAttributes.catType)) {
+          return res.status(400).json({ message: "Invalid catType value" });
+        }
+      }
+      if (parsedAttributes.otherAnimals && !Array.isArray(parsedAttributes.otherAnimals)) {
+        return res.status(400).json({ message: "otherAnimals must be an array" });
+      }
+      if (parsedAttributes.gardenAccess !== undefined) {
+        parsedAttributes.gardenAccess = Boolean(parsedAttributes.gardenAccess);
+      }
+    }
+
     if (image && typeof image === "string" && image.startsWith("data:")) {
       const matches = image.match(
         /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/
@@ -191,6 +220,34 @@ router.patch("/:id", async (req, res) => {
           .status(400)
           .json({ message: "attributes must be valid JSON" });
       }
+      // validate fields in update.attributes similar to create
+      const parsedAttributes = update.attributes || {};
+      if (parsedAttributes.childrenCompatibility) {
+        const allowed = [
+          "no",
+          "younger_than_6",
+          "6_to_14",
+          "14_plus",
+        ];
+        if (!allowed.includes(parsedAttributes.childrenCompatibility)) {
+          return res
+            .status(400)
+            .json({ message: "Invalid childrenCompatibility value" });
+        }
+      }
+      if (parsedAttributes.catType) {
+        const allowedCatTypes = ["indoor", "outdoor", "cuddle", "farm"];
+        if (!allowedCatTypes.includes(parsedAttributes.catType)) {
+          return res.status(400).json({ message: "Invalid catType value" });
+        }
+      }
+      if (parsedAttributes.otherAnimals && !Array.isArray(parsedAttributes.otherAnimals)) {
+        return res.status(400).json({ message: "otherAnimals must be an array" });
+      }
+      if (parsedAttributes.gardenAccess !== undefined) {
+        parsedAttributes.gardenAccess = Boolean(parsedAttributes.gardenAccess);
+      }
+      update.attributes = parsedAttributes;
     }
 
     if (req.body.description !== undefined)

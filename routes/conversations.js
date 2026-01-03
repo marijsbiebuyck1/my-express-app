@@ -150,15 +150,6 @@ async function upsertConversation(identity, animalId) {
     { new: true, upsert: true }
   );
 
-  // populate user info so admin/shelter can immediately see the matched user details
-  if (conversation && conversation.populate) {
-    try {
-      await conversation.populate("user", "name profileImage");
-    } catch (e) {
-      /* ignore populate errors */
-    }
-  }
-
   return { conversation, animal };
 }
 
@@ -212,14 +203,6 @@ async function findConversationById(conversationId, shelterId) {
     err.statusCode = 404;
     throw err;
   }
-  // populate user for admin views
-  if (convo && convo.populate) {
-    try {
-      await convo.populate("user", "name profileImage");
-    } catch (e) {
-      /* ignore populate errors */
-    }
-  }
   return convo;
 }
 
@@ -270,7 +253,6 @@ async function createMessage({ conversation, sender, text, displayName }) {
     toId: toKind === "user" ? conversation.user : conversation.shelter,
     text: normalizedText,
     authorDisplayName: displayName,
-    authorProfileImage: displayName && sender?.kind === "animal" ? conversation.animalPhoto || null : undefined,
   });
 
   conversation.lastMessage = normalizedText;
@@ -296,35 +278,17 @@ router.post("/", async (req, res) => {
     }
 
     // Only shelter or device (or server-side) may upsert/start a conversation.
-    // If a shelter is starting the conversation on behalf of a matched user,
-    // they may pass a userId in the body to link the conversation to that user.
-    let upsertIdentity = { ...identity };
-    if (identity.shelterId) {
-      const { userId } = req.body || {};
-      if (userId) {
-        if (!mongoose.Types.ObjectId.isValid(String(userId))) {
-          return res.status(400).json({ message: "Invalid userId" });
-        }
-        upsertIdentity.userId = String(userId);
-      }
-    }
-
-    const { conversation, animal } = await upsertConversation(
-      upsertIdentity,
-      animalId
-    );
+    const { conversation } = await upsertConversation(identity, animalId);
 
     let messageDoc = null;
     if (typeof autoMessage === "string" && autoMessage.trim().length) {
       if (!conversation.autoMessageSent) {
-        // Auto message must be sent from the animal. Use the animal's name as displayName
-        // and ensure the conversation has animal info populated by upsertConversation.
-        const displayName = animal?.name || null;
+        // Auto message must be sent from the animal
         messageDoc = await createMessage({
           conversation,
           sender: { kind: "animal" },
           text: autoMessage,
-          displayName,
+          displayName: null,
         });
         conversation.autoMessageSent = true;
         await conversation.save();
@@ -506,38 +470,3 @@ router.post("/:conversationOrAnimalId/messages", async (req, res) => {
 });
 
 export default router;
-
-// DELETE a conversation (remove a match). Allowed for shelter owning the conversation or the matched user.
-router.delete("/:id", async (req, res) => {
-  try {
-    const identity = resolveIdentity(req);
-    const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid conversation id" });
-    }
-
-    let convo = null;
-    if (identity.shelterId) {
-      convo = await Conversation.findOne({ _id: id, shelter: identity.shelterId });
-    } else if (identity.userId) {
-      convo = await Conversation.findOne({ _id: id, user: identity.userId });
-    } else if (identity.deviceKey) {
-      convo = await Conversation.findOne({ _id: id, deviceKey: identity.deviceKey });
-    }
-
-    if (!convo) {
-      const err = new Error("CONVERSATION_NOT_FOUND");
-      err.statusCode = 404;
-      throw err;
-    }
-
-    // delete related messages first
-    await Message.deleteMany({ conversation: convo._id });
-    await Conversation.deleteOne({ _id: convo._id });
-
-    return res.json({ success: true });
-  } catch (err) {
-    const status = err?.statusCode || 500;
-    return res.status(status).json({ message: err?.message || "Server error" });
-  }
-});
