@@ -191,13 +191,19 @@ router.post("/", async (req, res) => {
 // GET /animals — list animals (optional ?shelterId=&page=&limit=)
 router.get("/", async (req, res) => {
   try {
+    const adminClient = isAdminClientRequest(req);
     const { shelterId, page = 1, limit = 50 } = req.query;
     const l = Math.min(parseInt(limit, 10) || 50, 200);
     const p = Math.max(parseInt(page, 10) || 1, 1);
 
     const filter = {};
-    if (shelterId && mongoose.Types.ObjectId.isValid(shelterId))
+    if (shelterId && mongoose.Types.ObjectId.isValid(shelterId)) {
       filter.shelter = shelterId;
+    } else if (adminClient) {
+      return res.status(400).json({
+        message: "shelterId is verplicht voor admin-aanvragen",
+      });
+    }
 
     const animals = await Animal.find(filter)
       .sort({ createdAt: -1 })
