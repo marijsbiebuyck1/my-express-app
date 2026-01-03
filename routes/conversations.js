@@ -269,19 +269,53 @@ router.get("/", async (req, res) => {
     const identity = resolveIdentity(req);
     if (identity.shelterId) {
       const { animalId, userId } = req.query || {};
-      const filter = { shelter: identity.shelterId };
+      let requestedAnimalId = null;
       if (animalId) {
         if (!mongoose.Types.ObjectId.isValid(String(animalId))) {
           return res.status(400).json({ message: "Invalid animalId" });
         }
-        filter.animal = String(animalId);
+        requestedAnimalId = String(animalId);
       }
-      if (userId) {
-        if (!mongoose.Types.ObjectId.isValid(String(userId))) {
-          return res.status(400).json({ message: "Invalid userId" });
+
+      if (userId && !mongoose.Types.ObjectId.isValid(String(userId))) {
+        return res.status(400).json({ message: "Invalid userId" });
+      }
+
+      const animalMeta = new Map();
+      const ownedAnimalIds = [];
+      if (requestedAnimalId) {
+        const owned = await Animal.findOne({
+          _id: requestedAnimalId,
+          shelter: identity.shelterId,
+        })
+          .select("_id name photo")
+          .lean();
+        if (owned) {
+          const key = owned._id.toString();
+          animalMeta.set(key, owned);
+          ownedAnimalIds.push(key);
         }
-        filter.user = String(userId);
+      } else {
+        const animals = await Animal.find({ shelter: identity.shelterId })
+          .select("_id name photo")
+          .lean();
+        animals.forEach((a) => {
+          const key = a._id.toString();
+          ownedAnimalIds.push(key);
+          animalMeta.set(key, a);
+        });
       }
+
+      const filter = {
+        $or: [
+          { shelter: identity.shelterId },
+          ...(ownedAnimalIds.length
+            ? [{ animal: { $in: ownedAnimalIds } }]
+            : []),
+        ],
+      };
+      if (requestedAnimalId) filter.animal = requestedAnimalId;
+      if (userId) filter.user = String(userId);
 
       const list = await Conversation.find(filter)
         .sort({ updatedAt: -1 })
@@ -299,10 +333,12 @@ router.get("/", async (req, res) => {
         const participantAvatar = userEntity?.profileImage
           ? makeAbsoluteUrl(req, userEntity.profileImage)
           : null;
+        const animalKey = item.animal?.toString?.();
+        const animalInfo = animalKey ? animalMeta.get(animalKey) : null;
         return {
           id: item._id?.toString(),
           animalId: item.animal?.toString(),
-          animalName: item.animalName || "Onbekend dier",
+          animalName: item.animalName || animalInfo?.name || "Onbekend dier",
           userId:
             userEntity?._id?.toString?.() || item.user?.toString?.() || null,
           userName: participantName,
