@@ -6,6 +6,7 @@ import Animal from "../models/Animal.js";
 import Shelter from "../models/Shelter.js";
 import User from "../models/User.js";
 import Message from "../models/Message.js";
+import Conversation from "../models/Conversation.js";
 
 const router = express.Router();
 
@@ -23,6 +24,39 @@ const resolveProtocol = (req) => {
 const makeAbsoluteUrl = (req, p) => {
   return p;
 };
+
+const buildConversationKey = (conversation, userId) => {
+  if (conversation?.user || userId) {
+    const uid = conversation?.user?.toString?.() || userId?.toString?.();
+    return `${uid}:${conversation.animal?.toString?.()}`;
+  }
+  if (conversation?.deviceKey) {
+    return `device:${
+      conversation.deviceKey
+    }:${conversation.animal?.toString?.()}`;
+  }
+  if (conversation?.shelter) {
+    return `shelter:${conversation.shelter.toString?.()}:${conversation.animal?.toString?.()}`;
+  }
+  return conversation?._id?.toString?.();
+};
+
+async function ensureMatchConversation(animal, user) {
+  const baseUpdate = {
+    user: user._id,
+    animal: animal._id,
+    animalName: animal.name,
+    animalPhoto: animal.photo || null,
+    shelter: animal.shelter || null,
+  };
+
+  const conversation = await Conversation.findOneAndUpdate(
+    { user: user._id, animal: animal._id },
+    { $set: baseUpdate, $setOnInsert: { matchedAt: new Date() } },
+    { new: true, upsert: true }
+  );
+  return conversation;
+}
 
 // POST /animals — create animal
 // Accept optional { filename } referring to /public/uploads or optional { image: 'data:...;base64,...' }
@@ -61,12 +95,7 @@ router.post("/", async (req, res) => {
     // validate a few new attribute fields if present
     if (parsedAttributes) {
       if (parsedAttributes.childrenCompatibility) {
-        const allowed = [
-          "no",
-          "younger_than_6",
-          "6_to_14",
-          "14_plus",
-        ];
+        const allowed = ["no", "younger_than_6", "6_to_14", "14_plus"];
         if (!allowed.includes(parsedAttributes.childrenCompatibility)) {
           return res
             .status(400)
@@ -79,8 +108,13 @@ router.post("/", async (req, res) => {
           return res.status(400).json({ message: "Invalid catType value" });
         }
       }
-      if (parsedAttributes.otherAnimals && !Array.isArray(parsedAttributes.otherAnimals)) {
-        return res.status(400).json({ message: "otherAnimals must be an array" });
+      if (
+        parsedAttributes.otherAnimals &&
+        !Array.isArray(parsedAttributes.otherAnimals)
+      ) {
+        return res
+          .status(400)
+          .json({ message: "otherAnimals must be an array" });
       }
       if (parsedAttributes.gardenAccess !== undefined) {
         parsedAttributes.gardenAccess = Boolean(parsedAttributes.gardenAccess);
@@ -223,12 +257,7 @@ router.patch("/:id", async (req, res) => {
       // validate fields in update.attributes similar to create
       const parsedAttributes = update.attributes || {};
       if (parsedAttributes.childrenCompatibility) {
-        const allowed = [
-          "no",
-          "younger_than_6",
-          "6_to_14",
-          "14_plus",
-        ];
+        const allowed = ["no", "younger_than_6", "6_to_14", "14_plus"];
         if (!allowed.includes(parsedAttributes.childrenCompatibility)) {
           return res
             .status(400)
@@ -241,8 +270,13 @@ router.patch("/:id", async (req, res) => {
           return res.status(400).json({ message: "Invalid catType value" });
         }
       }
-      if (parsedAttributes.otherAnimals && !Array.isArray(parsedAttributes.otherAnimals)) {
-        return res.status(400).json({ message: "otherAnimals must be an array" });
+      if (
+        parsedAttributes.otherAnimals &&
+        !Array.isArray(parsedAttributes.otherAnimals)
+      ) {
+        return res
+          .status(400)
+          .json({ message: "otherAnimals must be an array" });
       }
       if (parsedAttributes.gardenAccess !== undefined) {
         parsedAttributes.gardenAccess = Boolean(parsedAttributes.gardenAccess);
@@ -376,24 +410,27 @@ export default router;
 
 // POST /animals/:id/match - register a match between a user and an animal
 // When a match is created, the animal sends a message to the user saying "dit is een match"
-router.post('/:id/match', async (req, res) => {
+router.post("/:id/match", async (req, res) => {
   try {
     const { id } = req.params; // animal id
     if (!mongoose.Types.ObjectId.isValid(id))
-      return res.status(400).json({ message: 'Invalid animal id' });
+      return res.status(400).json({ message: "Invalid animal id" });
     const animal = await Animal.findById(id).lean();
-    if (!animal) return res.status(404).json({ message: 'Animal not found' });
+    if (!animal) return res.status(404).json({ message: "Animal not found" });
 
     // Accept userId in body or use req.user.id if available
     const userId = req.body?.userId || (req.user && req.user.id);
-    if (!userId) return res.status(400).json({ message: 'userId required to register match' });
+    if (!userId)
+      return res
+        .status(400)
+        .json({ message: "userId required to register match" });
     if (!mongoose.Types.ObjectId.isValid(userId))
-      return res.status(400).json({ message: 'Invalid userId' });
-    const user = await User.findById(userId).select('-passwordHash').lean();
-    if (!user) return res.status(404).json({ message: 'User not found' });
+      return res.status(400).json({ message: "Invalid userId" });
+    const user = await User.findById(userId).select("-passwordHash").lean();
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     // Build token sets for user preferences and animal attributes
-    const norm = (s) => (typeof s === 'string' ? s.trim().toLowerCase() : null);
+    const norm = (s) => (typeof s === "string" ? s.trim().toLowerCase() : null);
     const pushIf = (arr, v) => {
       if (!v) return;
       if (Array.isArray(v)) v.forEach((x) => x && arr.push(norm(x)));
@@ -417,7 +454,10 @@ router.post('/:id/match', async (req, res) => {
     pushIf(animalTokens, attrs.traits || []);
 
     // Remove nulls and duplicates
-    const clean = (arr) => Array.from(new Set(arr.filter((x) => typeof x === 'string' && x.length > 0)));
+    const clean = (arr) =>
+      Array.from(
+        new Set(arr.filter((x) => typeof x === "string" && x.length > 0))
+      );
     const aTokens = clean(animalTokens);
     const uTokens = clean(userTokens);
 
@@ -432,19 +472,38 @@ router.post('/:id/match', async (req, res) => {
       return res.status(200).json({ match: false, similarity });
     }
 
-    // Create message from animal -> user
+    const conversation = await ensureMatchConversation(animal, user);
     const msg = await Message.create({
-      fromKind: 'animal',
-      fromId: animal._id,
-      toKind: 'user',
-      toId: user._id,
+      conversation: conversation._id,
+      conversationKey: buildConversationKey(conversation, user._id),
+      user: user._id,
       animal: animal._id,
-      text: 'dit is een match',
+      shelter: animal.shelter || undefined,
+      fromKind: "animal",
+      fromId: animal._id,
+      toKind: "user",
+      toId: user._id,
+      text: "dit is een match",
+      authorDisplayName: animal.name,
     });
 
-    return res.status(201).json({ match: true, similarity, message: msg });
+    conversation.lastMessage = msg.text;
+    conversation.lastMessageAt = msg.createdAt;
+    if (!conversation.matchedAt) {
+      conversation.matchedAt = msg.createdAt;
+    }
+    await conversation.save();
+
+    return res.status(201).json({
+      match: true,
+      similarity,
+      message: msg,
+      conversation,
+    });
   } catch (e) {
-    console.error('POST /animals/:id/match error:', e);
-    return res.status(500).json({ message: 'Server error', error: e.message || e });
+    console.error("POST /animals/:id/match error:", e);
+    return res
+      .status(500)
+      .json({ message: "Server error", error: e.message || e });
   }
 });
