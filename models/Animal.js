@@ -49,9 +49,7 @@ const animalSchema = new mongoose.Schema(
 animalSchema.set("toJSON", {
   transform: (doc, ret) => {
     ret.id = ret._id?.toString();
-    if (ret.createdViaAdmin === undefined) {
-      ret.createdViaAdmin = Boolean(ret.shelter);
-    }
+    ret.createdViaAdmin = Boolean(ret.createdViaAdmin || ret.shelter);
     delete ret._id;
     delete ret.__v;
     return ret;

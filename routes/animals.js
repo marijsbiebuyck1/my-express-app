@@ -210,11 +210,7 @@ router.get("/", async (req, res) => {
       if (a.photo) a.photo = makeAbsoluteUrl(req, a.photo);
       if (a.shelter && a.shelter.profileImage)
         a.shelter.profileImage = makeAbsoluteUrl(req, a.shelter.profileImage);
-      if (a.createdViaAdmin === undefined) {
-        a.createdViaAdmin = Boolean(a.shelter);
-      } else {
-        a.createdViaAdmin = Boolean(a.createdViaAdmin);
-      }
+      a.createdViaAdmin = Boolean(a.createdViaAdmin || a.shelter);
       return a;
     });
     return res.json(out);
@@ -240,11 +236,7 @@ router.get("/:id", async (req, res) => {
     if (obj.photo) obj.photo = makeAbsoluteUrl(req, obj.photo);
     if (obj.shelter && obj.shelter.profileImage)
       obj.shelter.profileImage = makeAbsoluteUrl(req, obj.shelter.profileImage);
-    if (obj.createdViaAdmin === undefined) {
-      obj.createdViaAdmin = Boolean(obj.shelter);
-    } else {
-      obj.createdViaAdmin = Boolean(obj.createdViaAdmin);
-    }
+    obj.createdViaAdmin = Boolean(obj.createdViaAdmin || obj.shelter);
     return res.json(obj);
   } catch (e) {
     console.error("GET /animals/:id error:", e);
