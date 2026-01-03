@@ -150,6 +150,15 @@ async function upsertConversation(identity, animalId) {
     { new: true, upsert: true }
   );
 
+  // populate user info so admin/shelter can immediately see the matched user details
+  if (conversation && conversation.populate) {
+    try {
+      await conversation.populate("user", "name profileImage");
+    } catch (e) {
+      /* ignore populate errors */
+    }
+  }
+
   return { conversation, animal };
 }
 
@@ -202,6 +211,14 @@ async function findConversationById(conversationId, shelterId) {
     const err = new Error("CONVERSATION_NOT_FOUND");
     err.statusCode = 404;
     throw err;
+  }
+  // populate user for admin views
+  if (convo && convo.populate) {
+    try {
+      await convo.populate("user", "name profileImage");
+    } catch (e) {
+      /* ignore populate errors */
+    }
   }
   return convo;
 }
