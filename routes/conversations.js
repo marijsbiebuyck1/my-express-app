@@ -36,6 +36,27 @@ const buildConversationKey = (conversation) => {
   return conversation?._id?.toString?.() ?? String(animalId);
 };
 
+const ADMIN_CLIENT_HEADER = "x-admin-client";
+const ADMIN_CLIENT_VALUE = "1";
+
+function isAdminClient(req) {
+  const flag = readHeader(req, ADMIN_CLIENT_HEADER);
+  if (!flag) return false;
+  return String(flag).trim() === ADMIN_CLIENT_VALUE;
+}
+
+async function attachShelterFromAnimal(identity, animalId) {
+  if (identity?.shelterId) return identity;
+  if (!animalId || !mongoose.Types.ObjectId.isValid(String(animalId))) {
+    return identity;
+  }
+  const animal = await Animal.findById(animalId).select("shelter");
+  if (animal?.shelter) {
+    identity.shelterId = animal.shelter.toString();
+  }
+  return identity;
+}
+
 function readHeader(req, name) {
   return (
     req.get(name) ||
@@ -179,15 +200,40 @@ async function findConversationById(conversationId, shelterId) {
     err.statusCode = 400;
     throw err;
   }
-  const convo = await Conversation.findOne({
+  let convo = await Conversation.findOne({
     _id: conversationId,
     shelter: shelterId,
   });
+  if (convo) return convo;
+
+  convo = await Conversation.findById(conversationId);
   if (!convo) {
     const err = new Error("CONVERSATION_NOT_FOUND");
     err.statusCode = 404;
     throw err;
   }
+
+  if (!shelterId) {
+    const err = new Error("CONVERSATION_NOT_FOUND");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const belongs = await Animal.exists({
+    _id: convo.animal,
+    shelter: shelterId,
+  });
+  if (!belongs) {
+    const err = new Error("CONVERSATION_NOT_FOUND");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (!convo.shelter) {
+    convo.shelter = shelterId;
+    await convo.save();
+  }
+
   return convo;
 }
 
@@ -267,16 +313,21 @@ router.post("/", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const identity = resolveIdentity(req);
-    if (identity.shelterId) {
-      const { animalId, userId } = req.query || {};
-      let requestedAnimalId = null;
-      if (animalId) {
-        if (!mongoose.Types.ObjectId.isValid(String(animalId))) {
-          return res.status(400).json({ message: "Invalid animalId" });
-        }
-        requestedAnimalId = String(animalId);
+    const adminClient = isAdminClient(req);
+    const { animalId, userId } = req.query || {};
+    let requestedAnimalId = null;
+    if (animalId) {
+      if (!mongoose.Types.ObjectId.isValid(String(animalId))) {
+        return res.status(400).json({ message: "Invalid animalId" });
       }
+      requestedAnimalId = String(animalId);
+    }
 
+    if (!identity.shelterId && adminClient && requestedAnimalId) {
+      await attachShelterFromAnimal(identity, requestedAnimalId);
+    }
+
+    if (identity.shelterId) {
       if (userId && !mongoose.Types.ObjectId.isValid(String(userId))) {
         return res.status(400).json({ message: "Invalid userId" });
       }
@@ -374,6 +425,13 @@ router.get("/", async (req, res) => {
 router.get("/:conversationOrAnimalId/messages", async (req, res) => {
   try {
     const identity = resolveIdentity(req);
+    const adminClient = isAdminClient(req);
+    const queryAnimalId = req.query?.animalId
+      ? String(req.query.animalId)
+      : null;
+    if (!identity.shelterId && adminClient && queryAnimalId) {
+      await attachShelterFromAnimal(identity, queryAnimalId);
+    }
     const { conversationOrAnimalId } = req.params;
 
     let conversation;
@@ -412,6 +470,13 @@ router.get("/:conversationOrAnimalId/messages", async (req, res) => {
 router.post("/:conversationOrAnimalId/messages", async (req, res) => {
   try {
     const identity = resolveIdentity(req);
+    const adminClient = isAdminClient(req);
+    const queryAnimalId = req.query?.animalId
+      ? String(req.query.animalId)
+      : null;
+    if (!identity.shelterId && adminClient && queryAnimalId) {
+      await attachShelterFromAnimal(identity, queryAnimalId);
+    }
     const { conversationOrAnimalId } = req.params;
     const { text } = req.body || {};
     if (!text || !String(text).trim().length) {
