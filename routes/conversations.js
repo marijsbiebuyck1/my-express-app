@@ -333,39 +333,44 @@ router.get("/", async (req, res) => {
       }
 
       const animalMeta = new Map();
-      const ownedAnimalIds = [];
+      let filter;
+
       if (requestedAnimalId) {
         const owned = await Animal.findOne({
           _id: requestedAnimalId,
           shelter: identity.shelterId,
         })
-          .select("_id name photo")
+          .select("_id name photo shelter")
           .lean();
-        if (owned) {
-          const key = owned._id.toString();
-          animalMeta.set(key, owned);
-          ownedAnimalIds.push(key);
+        if (!owned) {
+          return res
+            .status(404)
+            .json({ message: "Animal not found for this shelter" });
         }
+        const key = owned._id.toString();
+        animalMeta.set(key, owned);
+        filter = { animal: key };
       } else {
         const animals = await Animal.find({ shelter: identity.shelterId })
           .select("_id name photo")
           .lean();
+        const ownedAnimalIds = [];
         animals.forEach((a) => {
           const key = a._id.toString();
           ownedAnimalIds.push(key);
           animalMeta.set(key, a);
         });
+
+        filter = {
+          $or: [
+            { shelter: identity.shelterId },
+            ...(ownedAnimalIds.length
+              ? [{ animal: { $in: ownedAnimalIds } }]
+              : []),
+          ],
+        };
       }
 
-      const filter = {
-        $or: [
-          { shelter: identity.shelterId },
-          ...(ownedAnimalIds.length
-            ? [{ animal: { $in: ownedAnimalIds } }]
-            : []),
-        ],
-      };
-      if (requestedAnimalId) filter.animal = requestedAnimalId;
       if (userId) filter.user = String(userId);
 
       const list = await Conversation.find(filter)
