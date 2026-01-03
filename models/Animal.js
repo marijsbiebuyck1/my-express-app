@@ -33,13 +33,14 @@ const animalSchema = new mongoose.Schema(
     },
     name: { type: String, required: true },
     birthdate: { type: Date, required: true },
-   photo: { type: String },
-  description: { type: String, required: true },
+    photo: { type: String },
+    description: { type: String, required: true },
     status: {
       type: String,
       enum: ["available", "adopted", "fostered", "pending"],
       default: "available",
     },
+    createdViaAdmin: { type: Boolean, default: false },
     attributes: { type: AttributesSchema, default: {} },
   },
   { timestamps: true }
@@ -48,6 +49,9 @@ const animalSchema = new mongoose.Schema(
 animalSchema.set("toJSON", {
   transform: (doc, ret) => {
     ret.id = ret._id?.toString();
+    if (ret.createdViaAdmin === undefined) {
+      ret.createdViaAdmin = Boolean(ret.shelter);
+    }
     delete ret._id;
     delete ret.__v;
     return ret;

@@ -25,6 +25,14 @@ const makeAbsoluteUrl = (req, p) => {
   return p;
 };
 
+const ADMIN_CLIENT_HEADER = "x-admin-client";
+const ADMIN_CLIENT_VALUE = "1";
+const isAdminClientRequest = (req) => {
+  const flag = req.get(ADMIN_CLIENT_HEADER);
+  if (!flag) return false;
+  return String(flag).trim() === ADMIN_CLIENT_VALUE;
+};
+
 const buildConversationKey = (conversation, userId) => {
   if (conversation?.user || userId) {
     const uid = conversation?.user?.toString?.() || userId?.toString?.();
@@ -155,6 +163,8 @@ router.post("/", async (req, res) => {
 
     const filePath = file ? `/uploads/${file.filename}` : undefined;
 
+    const createdViaAdmin = isAdminClientRequest(req);
+
     const createData = {
       shelter: shelter._id,
       name,
@@ -162,6 +172,7 @@ router.post("/", async (req, res) => {
       description: normalizedDescription,
       attributes: parsedAttributes,
       photo: image,
+      createdViaAdmin,
     };
 
     const animal = await Animal.create(createData);
@@ -199,6 +210,11 @@ router.get("/", async (req, res) => {
       if (a.photo) a.photo = makeAbsoluteUrl(req, a.photo);
       if (a.shelter && a.shelter.profileImage)
         a.shelter.profileImage = makeAbsoluteUrl(req, a.shelter.profileImage);
+      if (a.createdViaAdmin === undefined) {
+        a.createdViaAdmin = Boolean(a.shelter);
+      } else {
+        a.createdViaAdmin = Boolean(a.createdViaAdmin);
+      }
       return a;
     });
     return res.json(out);
@@ -224,6 +240,11 @@ router.get("/:id", async (req, res) => {
     if (obj.photo) obj.photo = makeAbsoluteUrl(req, obj.photo);
     if (obj.shelter && obj.shelter.profileImage)
       obj.shelter.profileImage = makeAbsoluteUrl(req, obj.shelter.profileImage);
+    if (obj.createdViaAdmin === undefined) {
+      obj.createdViaAdmin = Boolean(obj.shelter);
+    } else {
+      obj.createdViaAdmin = Boolean(obj.createdViaAdmin);
+    }
     return res.json(obj);
   } catch (e) {
     console.error("GET /animals/:id error:", e);
@@ -239,6 +260,7 @@ router.patch("/:id", async (req, res) => {
       return res.status(400).json({ message: "Invalid id" });
 
     const update = {};
+    const adminClient = isAdminClientRequest(req);
     if (req.body.name !== undefined) update.name = req.body.name;
     if (req.body.birthdate !== undefined)
       update.birthdate = new Date(req.body.birthdate);
@@ -316,6 +338,8 @@ router.patch("/:id", async (req, res) => {
       await fs.promises.writeFile(absPath, Buffer.from(base64, "base64"));
       update.photo = `/uploads/${genFilename}`;
     }
+
+    if (adminClient) update.createdViaAdmin = true;
 
     if (Object.keys(update).length === 0)
       return res.status(400).json({ message: "No valid fields to update" });
