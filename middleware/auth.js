@@ -15,8 +15,26 @@ export default async function auth(req, res, next) {
     try {
       const payload = jwt.verify(token, SECRET);
       // payload should contain { id, name }
-      req.user = { id: payload.id, name: payload.name };
-      return next();
+      // fetch the full user from DB to avoid relying solely on token payload
+      try {
+        const u = await User.findById(payload.id).select('_id name role');
+        if (!u) {
+          console.error('Auth: token refers to non-existing user id', payload.id);
+          return res.status(401).json({ message: 'Invalid token user' });
+        }
+        // normalize req.user to a plain object with string id
+        req.user = { id: u._id.toString(), name: u.name, role: u.role };
+        // if a dev X-User-Id header is present, ensure it matches the token-derived user
+        const headerUserId = req.get('x-user-id') || req.headers['x-user-id'];
+        if (headerUserId && String(headerUserId).trim() !== req.user.id) {
+          console.error('Auth: mismatch between Authorization token user and X-User-Id header', { tokenUser: req.user.id, headerUserId });
+          return res.status(401).json({ message: 'User header does not match token' });
+        }
+        return next();
+      } catch (e) {
+        console.error('Auth lookup failed:', e && e.message);
+        return res.status(500).json({ message: 'Auth lookup error' });
+      }
     } catch (err) {
       console.error('Auth verify failed:', err && err.message);
       return res.status(401).json({ message: 'Invalid or expired token' });
