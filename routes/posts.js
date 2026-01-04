@@ -23,14 +23,22 @@ router.post("/", auth, async (req, res) => {
 
     const imageData = image.trim();
 
-    if (!req.user || !req.user.id) {
+    // Ensure we use the authenticated user as the author. Don't trust any author in the request body.
+    if (!req.user) {
       return res.status(401).json({ error: "Authentication required" });
     }
+
+    // Support token payloads that use `id` or `_id` and ensure it's a string
+    const rawAuthor = req.user.id || req.user._id || (req.user._doc && (req.user._doc.id || req.user._doc._id));
+    if (!rawAuthor) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    const authorId = String(rawAuthor);
 
     const post = await Post.create({
       image: imageData,
       caption,
-      author: req.user.id,
+      author: authorId,
     });
 
     // populate author (name + profileImage) for the response
