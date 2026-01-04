@@ -1,8 +1,14 @@
 import express from "express";
+import mongoose from "mongoose";
 import Post from "../models/Post.js";
 import auth from "../middleware/auth.js";
 
 const router = express.Router();
+
+// Debug helper: return the authenticated user as seen by the middleware
+router.get('/whoami', auth, (req, res) => {
+  return res.json({ user: req.user || null });
+});
 
 // Create a post: accepts { image: 'data:image/...;base64,...', caption }
 // Image data is stored directly on the document (similar to user.profileImage).
@@ -28,18 +34,29 @@ router.post("/", auth, async (req, res) => {
       return res.status(401).json({ error: "Authentication required" });
     }
 
-    // Support token payloads that use `id` or `_id` and ensure it's a string
-    const rawAuthor = req.user.id || req.user._id || (req.user._doc && (req.user._doc.id || req.user._doc._id));
+    // Determine authenticated user id from middleware (token lookup)
+    const rawAuthor = req.user?.id || req.user?._id || (req.user?._doc && (req.user._doc.id || req.user._doc._id));
     if (!rawAuthor) {
       return res.status(401).json({ error: "Authentication required" });
     }
     const authorId = String(rawAuthor);
 
-    const post = await Post.create({
+    // Debug log to help trace which user is used server-side
+    console.log("POST /posts - authenticated user:", { authorId, headerXUserId: req.get("x-user-id") });
+
+    // Create post with the authenticated user as author (always trust server-side identity)
+    const created = await Post.create({
       image: imageData,
       caption,
-      author: authorId,
+      author: mongoose.Types.ObjectId(authorId),
     });
+
+    // Defensive: ensure author is exactly the authenticated user (in case of hooks/overrides)
+    const post = await Post.findByIdAndUpdate(
+      created._id,
+      { $set: { author: mongoose.Types.ObjectId(authorId) } },
+      { new: true }
+    );
 
     // populate author (name + profileImage) for the response
     const populated = await Post.findById(post._id)
