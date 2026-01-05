@@ -117,18 +117,36 @@ router.post("/", async (req, res) => {
     });
 
     const saved = await newUser.save();
-    res.status(201).json(formatUserResponse(req, saved));
+
+    // ✅ NEW: create token on registration (so user is immediately "logged in")
+    const SECRET = process.env.JWT_SECRET || "dev-secret-change-this";
+    const token = jwt.sign(
+      { id: saved._id.toString(), name: saved.name },
+      SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // ✅ NEW: send user without passwordHash
+    const safeUser = saved.toJSON ? saved.toJSON() : saved;
+    if (safeUser && typeof safeUser === "object") delete safeUser.passwordHash;
+
+    return res.status(201).json({
+      message: "Registration successful",
+      token,
+      user: formatUserResponse(req, safeUser),
+    });
   } catch (error) {
     console.error("POST /users error:", error);
     if (error?.code === 11000)
       return res
         .status(409)
         .json({ message: "Duplicate key", error: error.message });
-    res
+    return res
       .status(500)
       .json({ message: "Error adding user", error: error.message || error });
   }
 });
+
 
 // POST /users/login — authenticate user with email + password
 router.post("/login", async (req, res) => {
