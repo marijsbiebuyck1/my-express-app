@@ -140,16 +140,18 @@ async function upsertConversation(identity, animalId) {
   if (hasUser) {
     const clauses = [{ user: identity.userId }];
     if (hasDevice) {
-      clauses.push({ deviceKey: identity.deviceKey });
+      clauses.push(
+        { deviceKey: identity.deviceKey, user: null },
+        { deviceKey: identity.deviceKey, user: { $exists: false } }
+      );
     }
-    if (clauses.length === 1) {
-      filter = { ...clauses[0], animal: animalId };
-    } else {
-      filter = {
-        animal: animalId,
-        $or: clauses,
-      };
-    }
+    filter =
+      clauses.length === 1
+        ? { ...clauses[0], animal: animalId }
+        : {
+            animal: animalId,
+            $or: clauses,
+          };
   } else {
     filter = { deviceKey: identity.deviceKey, animal: animalId };
   }
@@ -170,14 +172,21 @@ async function findConversation(identity, animalId) {
   if (identity.userId) {
     convo = await Conversation.findOne({ ...base, user: identity.userId });
     if (!convo && identity.deviceKey) {
-      convo = await Conversation.findOne({
+      let deviceConvo = await Conversation.findOne({
         ...base,
         deviceKey: identity.deviceKey,
       });
-      if (convo && !convo.user) {
-        convo.user = identity.userId;
-        await convo.save();
+      if (deviceConvo) {
+        const convoUserId = deviceConvo.user?.toString?.();
+        const canClaim = !convoUserId || convoUserId === identity.userId;
+        if (!canClaim) {
+          deviceConvo = null;
+        } else if (!convoUserId) {
+          deviceConvo.user = identity.userId;
+          await deviceConvo.save();
+        }
       }
+      convo = deviceConvo;
     }
   } else if (identity.deviceKey) {
     convo = await Conversation.findOne({
