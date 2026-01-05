@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import Animal from "../models/Animal.js";
 import Conversation from "../models/Conversation.js";
 import Message from "../models/Message.js";
+import Shelter from "../models/Shelter.js";
 
 const router = express.Router();
 
@@ -296,13 +297,39 @@ router.post("/", async (req, res) => {
     let messageDoc = null;
     if (typeof autoMessage === "string" && autoMessage.trim().length) {
       if (!conversation.autoMessageSent) {
+        let senderDescriptor = null;
+        let displayName = req.user?.name;
+
+        if (conversation.shelter) {
+          senderDescriptor = {
+            kind: "shelter",
+            id: conversation.shelter.toString?.() ?? conversation.shelter,
+          };
+          if (!displayName) {
+            const shelter = await Shelter.findById(conversation.shelter)
+              .select("name")
+              .lean();
+            displayName = shelter?.name || null;
+          }
+        } else if (identity.shelterId) {
+          senderDescriptor = { kind: "shelter", id: identity.shelterId };
+        }
+
+        if (!senderDescriptor) {
+          if (identity.userId) {
+            senderDescriptor = { kind: "user", id: identity.userId };
+          } else if (identity.deviceKey) {
+            senderDescriptor = { kind: "user", id: identity.deviceKey };
+          } else {
+            senderDescriptor = { kind: "user", id: null };
+          }
+        }
+
         messageDoc = await createMessage({
           conversation,
-          sender: identity.shelterId
-            ? { kind: "shelter", id: identity.shelterId }
-            : { kind: "user", id: identity.userId },
+          sender: senderDescriptor,
           text: autoMessage,
-          displayName: req.user?.name,
+          displayName: displayName || undefined,
         });
         conversation.autoMessageSent = true;
         await conversation.save();
