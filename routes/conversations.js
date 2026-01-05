@@ -333,44 +333,39 @@ router.get("/", async (req, res) => {
       }
 
       const animalMeta = new Map();
-      let filter;
-
+      const ownedAnimalIds = [];
       if (requestedAnimalId) {
         const owned = await Animal.findOne({
           _id: requestedAnimalId,
           shelter: identity.shelterId,
         })
-          .select("_id name photo shelter")
+          .select("_id name photo")
           .lean();
-        if (!owned) {
-          return res
-            .status(404)
-            .json({ message: "Animal not found for this shelter" });
+        if (owned) {
+          const key = owned._id.toString();
+          animalMeta.set(key, owned);
+          ownedAnimalIds.push(key);
         }
-        const key = owned._id.toString();
-        animalMeta.set(key, owned);
-        filter = { animal: key };
       } else {
         const animals = await Animal.find({ shelter: identity.shelterId })
           .select("_id name photo")
           .lean();
-        const ownedAnimalIds = [];
         animals.forEach((a) => {
           const key = a._id.toString();
           ownedAnimalIds.push(key);
           animalMeta.set(key, a);
         });
-
-        filter = {
-          $or: [
-            { shelter: identity.shelterId },
-            ...(ownedAnimalIds.length
-              ? [{ animal: { $in: ownedAnimalIds } }]
-              : []),
-          ],
-        };
       }
 
+      const filter = {
+        $or: [
+          { shelter: identity.shelterId },
+          ...(ownedAnimalIds.length
+            ? [{ animal: { $in: ownedAnimalIds } }]
+            : []),
+        ],
+      };
+      if (requestedAnimalId) filter.animal = requestedAnimalId;
       if (userId) filter.user = String(userId);
 
       const list = await Conversation.find(filter)
@@ -424,6 +419,59 @@ router.get("/", async (req, res) => {
     return res.json(mapped);
   } catch (err) {
     return res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.delete("/:conversationOrAnimalId", async (req, res) => {
+  try {
+    const identity = resolveIdentity(req);
+    const { conversationOrAnimalId } = req.params;
+
+    let conversation = null;
+    if (identity.shelterId) {
+      conversation = await findConversationById(
+        conversationOrAnimalId,
+        identity.shelterId
+      );
+    } else {
+      if (!identity.deviceKey && !identity.userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      if (mongoose.Types.ObjectId.isValid(conversationOrAnimalId)) {
+        const direct = await Conversation.findById(conversationOrAnimalId);
+        if (direct) {
+          const ownsConversation =
+            (identity.userId &&
+              direct.user?.toString?.() === identity.userId) ||
+            (identity.deviceKey && direct.deviceKey === identity.deviceKey);
+          if (ownsConversation) {
+            conversation = direct;
+          }
+        }
+      }
+
+      if (!conversation) {
+        if (!mongoose.Types.ObjectId.isValid(conversationOrAnimalId)) {
+          return res
+            .status(400)
+            .json({ message: "Invalid conversation or animal id" });
+        }
+        conversation = await findConversation(identity, conversationOrAnimalId);
+      }
+    }
+
+    if (!conversation) {
+      return res.status(404).json({ message: "Conversation not found" });
+    }
+
+    await Message.deleteMany({ conversation: conversation._id });
+    await Conversation.deleteOne({ _id: conversation._id });
+
+    return res.json({ success: true });
+  } catch (err) {
+    const status = err?.statusCode || 500;
+    return res.status(status).json({ message: err?.message || "Server error" });
   }
 });
 
