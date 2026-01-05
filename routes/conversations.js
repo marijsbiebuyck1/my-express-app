@@ -10,6 +10,17 @@ const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-this";
 
+const AUTO_MESSAGE_SUFFIX =
+  "Twijfels of vragen? Je kunt ze altijd hier stellen. Geen vragen meer? Vul dan het formulier in en wie weet claim ik binnenkort mijn plekje op jouw bank 😸.";
+const AUTO_MESSAGE_INTROS = [
+  "Ik heb 9 levens… wil jij er eentje met mij delen?",
+  "Oké, eerlijk? Ik kwam voor de snacks… maar ik blijf misschien voor jou.",
+  "Ik ben misschien een beetje verlegen, maar voor jou wil ik wel spinnen...",
+  "Ik ben meer een ‘kijk-eerst-de-kat-uit-de-boom’-type… maar jij lijkt veilig.",
+  "Dus eh… wat is jouw favoriete snack? Vraag voor een kat.",
+  "Zullen we doen alsof dit heel casual is, terwijl ik al een plekje op je bank claim?",
+];
+
 const makeAbsoluteUrl = (req, value) => {
   if (!value || typeof value !== "string") return value;
   if (value.startsWith("http://") || value.startsWith("https://")) {
@@ -284,6 +295,64 @@ async function createMessage({ conversation, sender, text, displayName }) {
   return message;
 }
 
+function buildAutoMessage() {
+  const intros = AUTO_MESSAGE_INTROS.filter(
+    (entry) => typeof entry === "string" && entry.trim().length
+  );
+  const fallbackSuffix = AUTO_MESSAGE_SUFFIX?.trim() || "";
+  const pick = intros.length
+    ? intros[Math.floor(Math.random() * intros.length)]
+    : "";
+  const intro = typeof pick === "string" ? pick.trim() : "";
+  if (!intro && !fallbackSuffix) {
+    return "";
+  }
+  if (!fallbackSuffix) return intro;
+  if (!intro) return fallbackSuffix;
+  return `${intro}\n\n${fallbackSuffix}`;
+}
+
+async function ensureAutomaticShelterMessage({
+  conversation,
+  identity,
+  overrideText,
+}) {
+  if (!conversation || conversation.autoMessageSent) return null;
+  let text = typeof overrideText === "string" ? overrideText.trim() : "";
+  if (!text) text = buildAutoMessage();
+  if (!text) return null;
+
+  let shelterId = null;
+  if (conversation.shelter) {
+    shelterId =
+      typeof conversation.shelter === "string"
+        ? conversation.shelter
+        : conversation.shelter.toString?.();
+  }
+  if (!shelterId && identity?.shelterId) {
+    shelterId = identity.shelterId;
+  }
+  if (!shelterId) return null;
+
+  let displayName = null;
+  try {
+    const shelter = await Shelter.findById(shelterId).select("name").lean();
+    displayName = shelter?.name || null;
+  } catch (err) {
+    console.warn("Failed to resolve shelter name for auto message", err);
+  }
+
+  const messageDoc = await createMessage({
+    conversation,
+    sender: { kind: "shelter", id: shelterId },
+    text,
+    displayName: displayName || undefined,
+  });
+  conversation.autoMessageSent = true;
+  await conversation.save();
+  return messageDoc;
+}
+
 router.post("/", async (req, res) => {
   try {
     const identity = resolveIdentity(req);
@@ -293,48 +362,15 @@ router.post("/", async (req, res) => {
     }
 
     const { conversation } = await upsertConversation(identity, animalId);
-
-    let messageDoc = null;
-    if (typeof autoMessage === "string" && autoMessage.trim().length) {
-      if (!conversation.autoMessageSent) {
-        let senderDescriptor = null;
-        let displayName = req.user?.name;
-
-        if (conversation.shelter) {
-          senderDescriptor = {
-            kind: "shelter",
-            id: conversation.shelter.toString?.() ?? conversation.shelter,
-          };
-          if (!displayName) {
-            const shelter = await Shelter.findById(conversation.shelter)
-              .select("name")
-              .lean();
-            displayName = shelter?.name || null;
-          }
-        } else if (identity.shelterId) {
-          senderDescriptor = { kind: "shelter", id: identity.shelterId };
-        }
-
-        if (!senderDescriptor) {
-          if (identity.userId) {
-            senderDescriptor = { kind: "user", id: identity.userId };
-          } else if (identity.deviceKey) {
-            senderDescriptor = { kind: "user", id: identity.deviceKey };
-          } else {
-            senderDescriptor = { kind: "user", id: null };
-          }
-        }
-
-        messageDoc = await createMessage({
-          conversation,
-          sender: senderDescriptor,
-          text: autoMessage,
-          displayName: displayName || undefined,
-        });
-        conversation.autoMessageSent = true;
-        await conversation.save();
-      }
-    }
+    const overrideText =
+      typeof autoMessage === "string" && autoMessage.trim().length
+        ? autoMessage
+        : null;
+    const messageDoc = await ensureAutomaticShelterMessage({
+      conversation,
+      identity,
+      overrideText,
+    });
 
     return res.status(messageDoc ? 201 : 200).json({
       conversation: conversation.toJSON(),
