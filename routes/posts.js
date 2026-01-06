@@ -49,8 +49,11 @@ router.post("/", auth, async (req, res) => {
       populated.author.id = populated.author._id.toString();
       delete populated.author._id;
     }
-    // ensure likes present
-    if (populated) populated.likes = populated.likes || 0;
+    // ensure likes present (compute from likedBy if available)
+    if (populated) {
+      populated.likes = Array.isArray(populated.likedBy) ? populated.likedBy.length : (populated.likes || 0);
+      if (populated.likedBy) delete populated.likedBy;
+    }
 
     return res.status(201).json(populated || post);
   } catch (err) {
@@ -73,8 +76,9 @@ router.get("/", async (req, res) => {
 
     const out = posts.map((p) => {
       const copy = { ...p };
-      // ensure likes present for list view
-      copy.likes = copy.likes || 0;
+  // compute likes from likedBy when present
+  copy.likes = Array.isArray(copy.likedBy) ? copy.likedBy.length : (copy.likes || 0);
+  if (copy.likedBy) delete copy.likedBy;
       if (copy.author) {
         if (copy.author._id) {
           copy.author.id = copy.author._id.toString();
@@ -102,8 +106,9 @@ router.get("/:id", async (req, res) => {
     );
     if (!post) return res.status(404).json({ error: "Not found" });
   const postObj = post.toJSON ? post.toJSON() : post;
-  // ensure likes present
-  postObj.likes = postObj.likes || 0;
+  // ensure likes present (compute from likedBy if available)
+  postObj.likes = Array.isArray(postObj.likedBy) ? postObj.likedBy.length : (postObj.likes || 0);
+  if (postObj.likedBy) delete postObj.likedBy;
     if (postObj.author) {
       if (postObj.author._id) {
         postObj.author.id = postObj.author._id.toString();
@@ -138,8 +143,20 @@ router.post("/:id/like", auth, async (req, res) => {
     if (!id) return res.status(400).json({ error: "Missing id" });
     const post = await Post.findById(id);
     if (!post) return res.status(404).json({ error: "Not found" });
-    post.likes = (post.likes || 0) + 1;
-    await post.save();
+    // determine author id from req.user (support different token shapes)
+    const rawAuthor = req.user?.id || req.user?._id || (req.user?._doc && (req.user._doc.id || req.user._doc._id));
+    if (!rawAuthor) return res.status(401).json({ error: "Authentication required" });
+    const authorId = String(rawAuthor);
+
+    post.likedBy = post.likedBy || [];
+    // prevent duplicate likes
+    if (post.likedBy.map(String).includes(authorId)) {
+      // already liked — return current state
+    } else {
+      post.likedBy.push(authorId);
+      post.likes = post.likedBy.length;
+      await post.save();
+    }
 
     const populated = await Post.findById(post._id)
       .populate("author", "name profileImage")
@@ -148,6 +165,10 @@ router.post("/:id/like", auth, async (req, res) => {
       populated.author.id = populated.author._id.toString();
       delete populated.author._id;
     }
+    // compute likes from likedBy array when present
+    populated.likes = Array.isArray(populated.likedBy) ? populated.likedBy.length : (populated.likes || 0);
+    // don't leak likedBy array to clients
+    if (populated.likedBy) delete populated.likedBy;
     return res.json(populated || post);
   } catch (err) {
     console.error(err);
@@ -162,8 +183,20 @@ router.post("/:id/unlike", auth, async (req, res) => {
     if (!id) return res.status(400).json({ error: "Missing id" });
     const post = await Post.findById(id);
     if (!post) return res.status(404).json({ error: "Not found" });
-    post.likes = Math.max(0, (post.likes || 0) - 1);
-    await post.save();
+
+    const rawAuthor = req.user?.id || req.user?._id || (req.user?._doc && (req.user._doc.id || req.user._doc._id));
+    if (!rawAuthor) return res.status(401).json({ error: "Authentication required" });
+    const authorId = String(rawAuthor);
+
+    post.likedBy = post.likedBy || [];
+    const idx = post.likedBy.map(String).indexOf(authorId);
+    if (idx === -1) {
+      // not liked by this user — no-op
+    } else {
+      post.likedBy.splice(idx, 1);
+      post.likes = Math.max(0, post.likedBy.length);
+      await post.save();
+    }
 
     const populated = await Post.findById(post._id)
       .populate("author", "name profileImage")
@@ -172,6 +205,8 @@ router.post("/:id/unlike", auth, async (req, res) => {
       populated.author.id = populated.author._id.toString();
       delete populated.author._id;
     }
+    populated.likes = Array.isArray(populated.likedBy) ? populated.likedBy.length : (populated.likes || 0);
+    if (populated.likedBy) delete populated.likedBy;
     return res.json(populated || post);
   } catch (err) {
     console.error(err);

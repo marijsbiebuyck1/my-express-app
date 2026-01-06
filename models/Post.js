@@ -10,6 +10,13 @@ const postSchema = new mongoose.Schema(
     image: { type: String, required: true }, // base64 data URL (data:image/...) stored directly
     caption: { type: String },
     likes: { type: Number, default: 0 },
+    // list of user ids who liked this post — used to prevent duplicate likes
+    likedBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
     comments: [
       {
         authorName: { type: String },
