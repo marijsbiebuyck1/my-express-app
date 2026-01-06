@@ -322,16 +322,10 @@ async function ensureAutomaticShelterMessage({
   if (!text) text = buildAutoMessage();
   if (!text) return null;
 
-  let shelterId = null;
-  if (conversation.shelter) {
-    shelterId =
-      typeof conversation.shelter === "string"
-        ? conversation.shelter
-        : conversation.shelter.toString?.();
-  }
-  if (!shelterId && identity?.shelterId) {
-    shelterId = identity.shelterId;
-  }
+  const shelterId = await resolveShelterIdForConversation(
+    conversation,
+    identity
+  );
   if (!shelterId) return null;
 
   let displayName = null;
@@ -351,6 +345,36 @@ async function ensureAutomaticShelterMessage({
   conversation.autoMessageSent = true;
   await conversation.save();
   return messageDoc;
+}
+
+async function resolveShelterIdForConversation(conversation, identity) {
+  if (!conversation) return null;
+  if (conversation.shelter) {
+    const existing =
+      typeof conversation.shelter === "string"
+        ? conversation.shelter
+        : conversation.shelter.toString?.();
+    if (existing) return existing;
+  }
+  if (identity?.shelterId) return identity.shelterId;
+
+  const animalId = conversation.animal?.toString?.()
+    ? conversation.animal.toString()
+    : conversation.animal;
+  if (!animalId) return null;
+
+  const animal = await Animal.findById(animalId).select("shelter").lean();
+  if (animal?.shelter) {
+    const resolved =
+      typeof animal.shelter === "string"
+        ? animal.shelter
+        : animal.shelter.toString?.();
+    if (resolved) {
+      conversation.shelter = animal.shelter;
+      return resolved;
+    }
+  }
+  return null;
 }
 
 router.post("/", async (req, res) => {
