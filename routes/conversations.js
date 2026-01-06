@@ -23,12 +23,24 @@ const AUTO_MESSAGE_INTROS = [
 
 const makeAbsoluteUrl = (req, value) => {
   if (!value || typeof value !== "string") return value;
-  if (value.startsWith("http://") || value.startsWith("https://")) {
-    return value;
-  }
+
+  // ✅ base64/data URL should be returned as-is
+  if (value.startsWith("data:")) return value;
+
+  // ✅ already absolute
+  if (value.startsWith("http://") || value.startsWith("https://")) return value;
+
+  // ✅ treat as relative file path
   const normalized = value.startsWith("/") ? value : `/${value}`;
-  return `${req.protocol}://${req.get("host")}${normalized}`;
+
+  // ✅ respect proxy (optional but recommended)
+  const proto = req.get("x-forwarded-proto")
+    ? String(req.get("x-forwarded-proto")).split(",")[0].trim()
+    : req.protocol;
+
+  return `${proto}://${req.get("host")}${normalized}`;
 };
+
 
 const buildConversationKey = (conversation) => {
   const animalId = conversation?.animal?.toString?.()
