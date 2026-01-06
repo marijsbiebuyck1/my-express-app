@@ -225,9 +225,23 @@ async function findConversationById(conversationId, shelterId) {
     _id: conversationId,
     shelter: shelterId,
   });
+  if (convo && convo.populate) {
+    try {
+      await convo.populate("user", "name profileImage");
+    } catch (e) {
+      /* ignore populate errors */
+    }
+  }
   if (convo) return convo;
 
   convo = await Conversation.findById(conversationId);
+  if (convo && convo.populate) {
+    try {
+      await convo.populate("user", "name profileImage");
+    } catch (e) {
+      /* ignore populate errors */
+    }
+  }
   if (!convo) {
     const err = new Error("CONVERSATION_NOT_FOUND");
     err.statusCode = 404;
@@ -596,18 +610,46 @@ router.get("/:conversationOrAnimalId/messages", async (req, res) => {
       conversation = await findConversation(identity, conversationOrAnimalId);
     }
 
+    // populate message user so we can access user.profileImage
     const messages = await Message.find({ conversation: conversation._id })
       .sort({ createdAt: 1 })
+      .populate("user", "name profileImage")
       .lean();
-    const data = messages.map((msg) => ({
-      id: msg._id?.toString(),
-      text: msg.text,
-      createdAt: msg.createdAt,
-      fromKind: msg.fromKind,
-      authorDisplayName: msg.authorDisplayName,
-    }));
+
+    const data = messages.map((msg) => {
+      // decide author profile image: prefer stored authorProfileImage, then user.profileImage, then animal photo
+      const rawAuthorImage =
+        msg.authorProfileImage ||
+        (msg.fromKind === "user" ? msg.user?.profileImage : null) ||
+        (msg.fromKind === "animal" ? conversation.animalPhoto : null) ||
+        null;
+      const authorProfileImage = makeAbsoluteUrl(req, rawAuthorImage);
+
+      return {
+        id: msg._id?.toString(),
+        text: msg.text,
+        createdAt: msg.createdAt,
+        fromKind: msg.fromKind,
+        authorDisplayName: msg.authorDisplayName,
+        authorProfileImage,
+      };
+    });
+
+    // ensure conversation user/profile images are absolute for admin UI
+    const convoObj = conversation.toJSON ? conversation.toJSON() : conversation;
+    if (convoObj.user && convoObj.user.profileImage) {
+      convoObj.user.profileImage = makeAbsoluteUrl(req, convoObj.user.profileImage);
+      if (convoObj.user._id) {
+        convoObj.user.id = convoObj.user._id.toString();
+        delete convoObj.user._id;
+      }
+    }
+    if (convoObj.animalPhoto) {
+      convoObj.animalPhoto = makeAbsoluteUrl(req, convoObj.animalPhoto);
+    }
+
     return res.json({
-      conversation: conversation.toJSON(),
+      conversation: convoObj,
       messages: data,
     });
   } catch (err) {
