@@ -13,11 +13,6 @@ const router = express.Router();
 // uploads directory (used when decoding base64 data-URLs)
 const uploadDir = path.join(process.cwd(), "public", "uploads");
 
-// ensure upload directory exists
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
 const resolveProtocol = (req) => {
   const forwarded = req.get("x-forwarded-proto");
   if (forwarded && typeof forwarded === "string") {
@@ -77,7 +72,7 @@ async function ensureMatchConversation(animal, user) {
 router.post("/", async (req, res) => {
   let file = null;
   try {
-    const { image, filename, photo, name, birthdate, attributes, description } =
+    const { image, filename, name, birthdate, attributes, description } =
       req.body || {};
     const normalizedDescription =
       typeof description === "string" ? description.trim() : "";
@@ -134,12 +129,8 @@ router.post("/", async (req, res) => {
       }
     }
 
-    // support both `image` (data URL) and `photo` (either data URL or filename)
-    const incomingImage = typeof image === "string" ? image : typeof photo === "string" ? photo : undefined;
-    const incomingFilename = typeof filename === "string" ? filename : (typeof photo === "string" && (!incomingImage || !incomingImage.startsWith("data:"))) ? photo : undefined;
-
-    if (incomingImage && incomingImage.startsWith("data:")) {
-      const matches = incomingImage.match(
+    if (image && typeof image === "string" && image.startsWith("data:")) {
+      const matches = image.match(
         /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/
       );
       if (!matches)
@@ -157,8 +148,8 @@ router.post("/", async (req, res) => {
       const absPath = path.join(uploadDir, genFilename);
       await fs.promises.writeFile(absPath, Buffer.from(base64, "base64"));
       file = { filename: genFilename };
-    } else if (incomingFilename && typeof incomingFilename === "string") {
-      file = { filename: path.basename(incomingFilename) };
+    } else if (filename && typeof filename === "string") {
+      file = { filename: path.basename(filename) };
     }
 
     const shelter = await Shelter.findById(shelterId).select("-passwordHash");
@@ -170,7 +161,7 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ message: "Shelter not found" });
     }
 
-  const filePath = file ? `/uploads/${file.filename}` : undefined;
+    const filePath = file ? `/uploads/${file.filename}` : undefined;
 
     const createdViaAdmin = isAdminClientRequest(req);
 
@@ -180,8 +171,7 @@ router.post("/", async (req, res) => {
       birthdate: new Date(birthdate),
       description: normalizedDescription,
       attributes: parsedAttributes,
-      // prefer saved file path when we saved a file, otherwise keep whatever was provided
-      photo: filePath || image,
+      photo: image,
       createdViaAdmin,
     };
 
@@ -322,12 +312,12 @@ router.patch("/:id", async (req, res) => {
 
     if (req.body.status !== undefined) update.status = req.body.status;
 
-    // support `image` (data URL), `photo` (data URL or filename), or `filename`
-    const incomingPatchImage = typeof req.body.image === "string" ? req.body.image : typeof req.body.photo === "string" ? req.body.photo : undefined;
-    const incomingPatchFilename = typeof req.body.filename === "string" ? req.body.filename : (typeof req.body.photo === "string" && (!incomingPatchImage || !incomingPatchImage.startsWith("data:"))) ? req.body.photo : undefined;
-
-    if (incomingPatchImage && incomingPatchImage.startsWith("data:")) {
-      const matches = incomingPatchImage.match(
+    if (
+      req.body.image &&
+      typeof req.body.image === "string" &&
+      req.body.image.startsWith("data:")
+    ) {
+      const matches = req.body.image.match(
         /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/
       );
       if (!matches)
@@ -345,8 +335,6 @@ router.patch("/:id", async (req, res) => {
       const absPath = path.join(uploadDir, genFilename);
       await fs.promises.writeFile(absPath, Buffer.from(base64, "base64"));
       update.photo = `/uploads/${genFilename}`;
-    } else if (incomingPatchFilename && typeof incomingPatchFilename === "string") {
-      update.photo = `/uploads/${path.basename(incomingPatchFilename)}`;
     }
 
     if (adminClient) update.createdViaAdmin = true;
@@ -439,27 +427,6 @@ router.delete("/", async (req, res) => {
       .json({ message: "Server error", error: e.message || e });
   }
 });
-
-// POST /animals/:id/avatar and /animals/:id/photo — update the animal's photo
-// Mirrors the behaviour in routes/users.js: accept JSON with { profileImage }
-// where profileImage can be a data URL or a filename reference. We store
-// the value directly on the animal.photo field so the admin UI can update
-// photos the same way as user profiles.
-const animalPhotoHandler = async (req, res) => {
-  const { id } = req.params;
-  const profileImage = req.body.profileImage || req.body.photo || req.body.filename;
-
-  const animal = await Animal.findById(id);
-  if (!animal) return res.status(404).json({ message: "Animal not found" });
-  animal.photo = profileImage;
-  await animal.save();
-  const obj = animal.toJSON ? animal.toJSON() : animal;
-  if (obj.photo) obj.photo = makeAbsoluteUrl(req, obj.photo);
-  return res.json(obj);
-};
-
-router.post("/:id/avatar", animalPhotoHandler);
-router.post("/:id/photo", animalPhotoHandler);
 
 export default router;
 
