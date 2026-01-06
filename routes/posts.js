@@ -49,6 +49,8 @@ router.post("/", auth, async (req, res) => {
       populated.author.id = populated.author._id.toString();
       delete populated.author._id;
     }
+    // ensure likes present
+    if (populated) populated.likes = populated.likes || 0;
 
     return res.status(201).json(populated || post);
   } catch (err) {
@@ -71,6 +73,8 @@ router.get("/", async (req, res) => {
 
     const out = posts.map((p) => {
       const copy = { ...p };
+      // ensure likes present for list view
+      copy.likes = copy.likes || 0;
       if (copy.author) {
         if (copy.author._id) {
           copy.author.id = copy.author._id.toString();
@@ -97,7 +101,9 @@ router.get("/:id", async (req, res) => {
       "name profileImage"
     );
     if (!post) return res.status(404).json({ error: "Not found" });
-    const postObj = post.toJSON ? post.toJSON() : post;
+  const postObj = post.toJSON ? post.toJSON() : post;
+  // ensure likes present
+  postObj.likes = postObj.likes || 0;
     if (postObj.author) {
       if (postObj.author._id) {
         postObj.author.id = postObj.author._id.toString();
@@ -119,6 +125,54 @@ router.delete("/:id", async (req, res) => {
     const post = await Post.findByIdAndDelete(req.params.id);
     if (!post) return res.status(404).json({ error: "Not found" });
     return res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// POST /posts/:id/like - increment likes count (requires auth)
+router.post("/:id/like", auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: "Missing id" });
+    const post = await Post.findById(id);
+    if (!post) return res.status(404).json({ error: "Not found" });
+    post.likes = (post.likes || 0) + 1;
+    await post.save();
+
+    const populated = await Post.findById(post._id)
+      .populate("author", "name profileImage")
+      .lean();
+    if (populated && populated.author && populated.author._id) {
+      populated.author.id = populated.author._id.toString();
+      delete populated.author._id;
+    }
+    return res.json(populated || post);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// POST /posts/:id/unlike - decrement likes count (requires auth)
+router.post("/:id/unlike", auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: "Missing id" });
+    const post = await Post.findById(id);
+    if (!post) return res.status(404).json({ error: "Not found" });
+    post.likes = Math.max(0, (post.likes || 0) - 1);
+    await post.save();
+
+    const populated = await Post.findById(post._id)
+      .populate("author", "name profileImage")
+      .lean();
+    if (populated && populated.author && populated.author._id) {
+      populated.author.id = populated.author._id.toString();
+      delete populated.author._id;
+    }
+    return res.json(populated || post);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Server error" });
