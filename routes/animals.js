@@ -440,6 +440,27 @@ router.delete("/", async (req, res) => {
   }
 });
 
+// POST /animals/:id/avatar and /animals/:id/photo — update the animal's photo
+// Mirrors the behaviour in routes/users.js: accept JSON with { profileImage }
+// where profileImage can be a data URL or a filename reference. We store
+// the value directly on the animal.photo field so the admin UI can update
+// photos the same way as user profiles.
+const animalPhotoHandler = async (req, res) => {
+  const { id } = req.params;
+  const profileImage = req.body.profileImage || req.body.photo || req.body.filename;
+
+  const animal = await Animal.findById(id);
+  if (!animal) return res.status(404).json({ message: "Animal not found" });
+  animal.photo = profileImage;
+  await animal.save();
+  const obj = animal.toJSON ? animal.toJSON() : animal;
+  if (obj.photo) obj.photo = makeAbsoluteUrl(req, obj.photo);
+  return res.json(obj);
+};
+
+router.post("/:id/avatar", animalPhotoHandler);
+router.post("/:id/photo", animalPhotoHandler);
+
 export default router;
 
 // POST /animals/:id/match - register a match between a user and an animal
