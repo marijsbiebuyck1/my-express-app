@@ -13,6 +13,11 @@ const router = express.Router();
 // uploads directory (used when decoding base64 data-URLs)
 const uploadDir = path.join(process.cwd(), "public", "uploads");
 
+// ensure upload directory exists
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 const resolveProtocol = (req) => {
   const forwarded = req.get("x-forwarded-proto");
   if (forwarded && typeof forwarded === "string") {
@@ -161,7 +166,7 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ message: "Shelter not found" });
     }
 
-    const filePath = file ? `/uploads/${file.filename}` : undefined;
+  const filePath = file ? `/uploads/${file.filename}` : undefined;
 
     const createdViaAdmin = isAdminClientRequest(req);
 
@@ -171,7 +176,8 @@ router.post("/", async (req, res) => {
       birthdate: new Date(birthdate),
       description: normalizedDescription,
       attributes: parsedAttributes,
-      photo: image,
+      // prefer saved file path when we saved a file, otherwise keep whatever was provided
+      photo: filePath || image,
       createdViaAdmin,
     };
 
@@ -335,6 +341,9 @@ router.patch("/:id", async (req, res) => {
       const absPath = path.join(uploadDir, genFilename);
       await fs.promises.writeFile(absPath, Buffer.from(base64, "base64"));
       update.photo = `/uploads/${genFilename}`;
+    } else if (req.body.filename && typeof req.body.filename === "string") {
+      // client referenced an existing uploaded filename
+      update.photo = `/uploads/${path.basename(req.body.filename)}`;
     }
 
     if (adminClient) update.createdViaAdmin = true;
@@ -529,3 +538,4 @@ router.post("/:id/match", async (req, res) => {
       .json({ message: "Server error", error: e.message || e });
   }
 });
+
